@@ -9,6 +9,8 @@ data/raw/
 *.db
 *.sqlite
 *.sqlite3
+*.db-shm
+*.db-wal
 # Hosted dashboard needs the built analysis DB (do not commit WAL/SHM).
 !data/stock_analysis.db
 
