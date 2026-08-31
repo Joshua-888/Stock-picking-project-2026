@@ -1,0 +1,101 @@
+# config/config.yaml
+# Central configuration for the statistical stock analysis platform.
+# All values here can be overridden by environment variables where noted.
+
+project:
+  name: "Statistical Stock Analysis"
+  version: "0.1.0"
+  description: >
+    A modern replication of the Keyes (1972) statistical study using
+    correlation and regression analysis to estimate the probability that
+    a stock will outperform the S&P 500 over the next 12 months.
+
+# ── Data provider ─────────────────────────────────────────────────────────────
+# Override with environment variable: DATA_PROVIDER=sample|nasdaq_data_link
+data:
+  provider: "yfinance"         # yfinance (real data, free) | sample (synthetic, testing only) | nasdaq_data_link
+  benchmark_ticker: "SPY"
+  start_date: "2010-01-01"     # Earliest date to pull historical data from
+  end_date: null               # null = use today's date
+
+# ── Database ──────────────────────────────────────────────────────────────────
+# Override path with environment variable: DATABASE_PATH=path/to/file.db
+database:
+  type: "sqlite"               # sqlite (MVP); postgresql supported later
+  path: "data/stock_analysis.db"
+
+# ── Reporting lags (look-ahead bias prevention) ───────────────────────────────
+# Financial statements are not available immediately after the period ends.
+# These lags ensure the model never uses data it could not have seen.
+reporting_lags:
+  quarterly_earnings_days: 45  # Q results available ~45 days after quarter end
+  annual_report_days: 90       # Annual report available ~90 days after FY end
+
+# ── Feature engineering ───────────────────────────────────────────────────────
+features:
+  lookback_years: 5            # Years of history used for 5-year growth rates
+  momentum_short_months: 6     # Short-term momentum lookback
+  momentum_long_months: 12     # Long-term momentum lookback
+  volatility_months: 12        # Months used to calculate historical volatility
+  winsorize_lower: 0.01        # Clip bottom 1% of each feature
+  winsorize_upper: 0.99        # Clip top 1% of each feature
+  min_price_history_months: 24 # Minimum months of price data required
+
+# ── Target variable ───────────────────────────────────────────────────────────
+targets:
+  horizon_months: 12           # How far ahead to measure return (12 months)
+
+# ── Scoring weights ───────────────────────────────────────────────────────────
+# Must sum to 1.0.  Adjust to change what drives the final_score.
+scoring:
+  weights:
+    probability_of_outperformance: 0.35
+    expected_excess_return:        0.25
+    model_agreement:               0.15
+    risk_score:                    0.10
+    data_quality:                  0.10
+    valuation:                     0.05
+
+  # Classification thresholds
+  thresholds:
+    strong_candidate:
+      min_probability:     0.60
+      min_excess_return:   0.05   # 5 percentage points above benchmark
+      min_model_agreement: 0.70
+      min_data_quality:    75
+    watchlist_candidate:
+      min_probability:     0.50
+      min_excess_return:   0.02
+      min_model_agreement: 0.55
+      min_data_quality:    60
+
+# ── Model hyperparameters ─────────────────────────────────────────────────────
+models:
+  ridge_alpha: 1.0             # Regularisation strength for Ridge regression
+  lasso_alpha: 0.1             # Regularisation strength for Lasso regression
+  vif_threshold: 10.0          # VIF above this triggers a multicollinearity warning
+  min_observations: 30         # Minimum stock-months needed to train a model
+  significance_level: 0.05     # p-value threshold for reporting significance
+
+# ── Hidden Gems (Keyes random-selection methodology) ─────────────────────────
+# Replicates Keyes's use of 30 randomly-selected firms alongside the core group.
+# Each month, n_select stocks are drawn from hidden_gems_pool in tickers.yaml.
+# The seed is derived from the prediction month so selections are consistent
+# within a month but rotate each month — exposing new candidates over time.
+hidden_gems:
+  enabled: true
+  n_select: 30           # How many gems to draw each month (Keyes used 30)
+  min_market_cap_B: 0.5  # Minimum market cap $B (filters out micro-caps)
+
+# ── Backtesting ───────────────────────────────────────────────────────────────
+backtesting:
+  min_training_months: 36      # Minimum history before the first backtest window
+  top_n_stocks: 10             # How many top-ranked stocks form the "portfolio"
+  rebalance_frequency: "monthly"
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging:
+  level: "INFO"                # DEBUG | INFO | WARNING | ERROR
+  file: "logs/stock_analysis.log"
+  max_bytes: 5242880           # 5 MB before log rotation
+  backup_count: 3

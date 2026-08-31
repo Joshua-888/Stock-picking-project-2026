@@ -1,0 +1,31 @@
+ticker,company_name,sector,industry,exchange,currency,is_active,shares_outstanding_m,first_available_date,last_available_date
+AAPL,Apple Inc.,Technology,Consumer Electronics,NASDAQ,USD,1,20000.0,2009-10-31,2026-05-31
+MSFT,Microsoft Corporation,Technology,Software - Infrastructure,NASDAQ,USD,1,20000.0,2009-10-31,2026-05-31
+NVDA,NVIDIA Corporation,Technology,Semiconductors,NASDAQ,USD,1,2219.66,2009-10-31,2026-05-31
+AMD,Advanced Micro Devices Inc.,Technology,Semiconductors,NASDAQ,USD,1,20000.0,2009-10-31,2026-05-31
+ORCL,Oracle Corporation,Technology,Software - Infrastructure,NASDAQ,USD,1,939.59,2009-10-31,2026-05-31
+CSCO,Cisco Systems Inc.,Technology,Communication Equipment,NASDAQ,USD,1,2216.06,2009-10-31,2026-05-31
+CRM,Salesforce Inc.,Technology,Software - Application,NASDAQ,USD,1,20000.0,2009-10-31,2026-05-31
+GOOGL,Alphabet Inc.,Communication Services,Internet Content & Information,NASDAQ,USD,1,3619.28,2009-10-31,2026-05-31
+META,Meta Platforms Inc.,Communication Services,Internet Content & Information,NASDAQ,USD,1,2228.72,2009-10-31,2026-05-31
+NFLX,Netflix Inc.,Communication Services,Entertainment,NASDAQ,USD,1,2898.82,2009-10-31,2026-05-31
+AMZN,Amazon.com Inc.,Consumer Discretionary,Internet Retail,NASDAQ,USD,1,2062.91,2009-10-31,2026-05-31
+TSLA,Tesla Inc.,Consumer Discretionary,Auto Manufacturers,NASDAQ,USD,1,5101.22,2009-10-31,2026-05-31
+MCD,McDonald's Corporation,Consumer Discretionary,Restaurants,NASDAQ,USD,1,4525.77,2009-10-31,2026-05-31
+NKE,Nike Inc.,Consumer Discretionary,Footwear & Accessories,NASDAQ,USD,1,2970.53,2009-10-31,2026-05-31
+WMT,Walmart Inc.,Consumer Staples,Discount Stores,NASDAQ,USD,1,398.5,2009-10-31,2026-05-31
+COST,Costco Wholesale Corporation,Consumer Staples,Discount Stores,NASDAQ,USD,1,2378.21,2009-10-31,2026-05-31
+PG,Procter & Gamble Co.,Consumer Staples,Household & Personal Products,NASDAQ,USD,1,974.48,2009-10-31,2026-05-31
+KO,Coca-Cola Company,Consumer Staples,Beverages - Non-Alcoholic,NASDAQ,USD,1,2926.79,2009-10-31,2026-05-31
+PEP,PepsiCo Inc.,Consumer Staples,Beverages - Non-Alcoholic,NASDAQ,USD,1,816.48,2009-10-31,2026-05-31
+UNH,UnitedHealth Group Inc.,Healthcare,Healthcare Plans,NASDAQ,USD,1,1126.13,2009-10-31,2026-05-31
+JNJ,Johnson & Johnson,Healthcare,Drug Manufacturers - General,NASDAQ,USD,1,1980.44,2009-10-31,2026-05-31
+MRK,Merck & Co. Inc.,Healthcare,Drug Manufacturers - General,NASDAQ,USD,1,311.96,2009-10-31,2026-05-31
+ABBV,AbbVie Inc.,Healthcare,Drug Manufacturers - General,NASDAQ,USD,1,3897.71,2009-10-31,2026-05-31
+JPM,JPMorgan Chase & Co.,Financials,Banks - Diversified,NASDAQ,USD,1,2985.03,2009-10-31,2026-05-31
+BAC,Bank of America Corporation,Financials,Banks - Diversified,NASDAQ,USD,1,319.32,2009-10-31,2026-05-31
+V,Visa Inc.,Financials,Credit Services,NASDAQ,USD,1,650.2,2009-10-31,2026-05-31
+MA,Mastercard Inc.,Financials,Credit Services,NASDAQ,USD,1,1361.82,2009-10-31,2026-05-31
+HD,Home Depot Inc.,Consumer Discretionary,Home Improvement Retail,NASDAQ,USD,1,5668.85,2009-10-31,2026-05-31
+XOM,Exxon Mobil Corporation,Energy,Oil & Gas Integrated,NASDAQ,USD,1,1104.58,2009-10-31,2026-05-31
+CVX,Chevron Corporation,Energy,Oil & Gas Integrated,NASDAQ,USD,1,429.79,2009-10-31,2026-05-31

@@ -1,0 +1,54 @@
+# ── Secrets ───────────────────────────────────────────────────────────────────
+.env
+*.env
+
+# ── Raw data (can be large and re-downloaded) ─────────────────────────────────
+data/raw/
+
+# ── Database files ────────────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+# Hosted dashboard needs the built analysis DB (do not commit WAL/SHM).
+!data/stock_analysis.db
+
+# ── Python cache ──────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Streamlit ─────────────────────────────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+
+# ── Accidental local package installs (not part of the app) ───────────────────
+/sqlalchemy/
+/sqlalchemy-*.dist-info/
+/greenlet/
+/greenlet-*.dist-info/
+/typing_extensions.py
+/typing_extensions-*.dist-info/
+/include/
+pipeline_out.txt

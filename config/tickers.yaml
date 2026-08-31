@@ -1,0 +1,507 @@
+# config/tickers.yaml
+# Core 30 = ACTUAL Dow Jones Industrial Average (as of November 2024)
+# This exactly replicates Keyes (1972) who used the DJIA 30 as his fixed group.
+# The DJIA is a publicly published, objective index — no selection bias.
+
+benchmark:
+  ticker: "SPY"
+  name: "SPDR S&P 500 ETF Trust"
+  description: "S&P 500 proxy used for all excess-return calculations"
+
+universe:
+  # ── Technology ──────────────────────────────────────────────────────────────
+  - ticker: "AAPL"
+    name: "Apple Inc."
+    sector: "Technology"
+    industry: "Consumer Electronics"
+
+  - ticker: "MSFT"
+    name: "Microsoft Corporation"
+    sector: "Technology"
+    industry: "Software - Infrastructure"
+
+  - ticker: "NVDA"
+    name: "NVIDIA Corporation"
+    sector: "Technology"
+    industry: "Semiconductors"
+
+  - ticker: "CSCO"
+    name: "Cisco Systems Inc."
+    sector: "Technology"
+    industry: "Communication Equipment"
+
+  - ticker: "CRM"
+    name: "Salesforce Inc."
+    sector: "Technology"
+    industry: "Software - Application"
+
+  - ticker: "IBM"
+    name: "International Business Machines"
+    sector: "Technology"
+    industry: "Information Technology Services"
+
+  # ── Communication Services ───────────────────────────────────────────────────
+  - ticker: "DIS"
+    name: "The Walt Disney Company"
+    sector: "Communication Services"
+    industry: "Entertainment"
+
+  - ticker: "VZ"
+    name: "Verizon Communications Inc."
+    sector: "Communication Services"
+    industry: "Telecom Services"
+
+  # ── Consumer Discretionary ───────────────────────────────────────────────────
+  - ticker: "AMZN"
+    name: "Amazon.com Inc."
+    sector: "Consumer Discretionary"
+    industry: "Internet Retail"
+
+  - ticker: "MCD"
+    name: "McDonald's Corporation"
+    sector: "Consumer Discretionary"
+    industry: "Restaurants"
+
+  - ticker: "NKE"
+    name: "Nike Inc."
+    sector: "Consumer Discretionary"
+    industry: "Footwear & Accessories"
+
+  - ticker: "HD"
+    name: "Home Depot Inc."
+    sector: "Consumer Discretionary"
+    industry: "Home Improvement Retail"
+
+  # ── Consumer Staples ─────────────────────────────────────────────────────────
+  - ticker: "WMT"
+    name: "Walmart Inc."
+    sector: "Consumer Staples"
+    industry: "Discount Stores"
+
+  - ticker: "PG"
+    name: "Procter & Gamble Co."
+    sector: "Consumer Staples"
+    industry: "Household & Personal Products"
+
+  - ticker: "KO"
+    name: "Coca-Cola Company"
+    sector: "Consumer Staples"
+    industry: "Beverages - Non-Alcoholic"
+
+  # ── Healthcare ───────────────────────────────────────────────────────────────
+  - ticker: "UNH"
+    name: "UnitedHealth Group Inc."
+    sector: "Healthcare"
+    industry: "Healthcare Plans"
+
+  - ticker: "JNJ"
+    name: "Johnson & Johnson"
+    sector: "Healthcare"
+    industry: "Drug Manufacturers - General"
+
+  - ticker: "MRK"
+    name: "Merck & Co. Inc."
+    sector: "Healthcare"
+    industry: "Drug Manufacturers - General"
+
+  - ticker: "AMGN"
+    name: "Amgen Inc."
+    sector: "Healthcare"
+    industry: "Biotechnology"
+
+  # ── Financials ───────────────────────────────────────────────────────────────
+  - ticker: "JPM"
+    name: "JPMorgan Chase & Co."
+    sector: "Financials"
+    industry: "Banks - Diversified"
+
+  - ticker: "V"
+    name: "Visa Inc."
+    sector: "Financials"
+    industry: "Credit Services"
+
+  - ticker: "GS"
+    name: "Goldman Sachs Group Inc."
+    sector: "Financials"
+    industry: "Capital Markets"
+
+  - ticker: "AXP"
+    name: "American Express Company"
+    sector: "Financials"
+    industry: "Credit Services"
+
+  - ticker: "TRV"
+    name: "Travelers Companies Inc."
+    sector: "Financials"
+    industry: "Insurance - Property & Casualty"
+
+  # ── Industrials ──────────────────────────────────────────────────────────────
+  - ticker: "BA"
+    name: "Boeing Company"
+    sector: "Industrials"
+    industry: "Aerospace & Defense"
+
+  - ticker: "CAT"
+    name: "Caterpillar Inc."
+    sector: "Industrials"
+    industry: "Farm & Heavy Construction Machinery"
+
+  - ticker: "HON"
+    name: "Honeywell International Inc."
+    sector: "Industrials"
+    industry: "Conglomerates"
+
+  - ticker: "MMM"
+    name: "3M Company"
+    sector: "Industrials"
+    industry: "Conglomerates"
+
+  # ── Materials ────────────────────────────────────────────────────────────────
+  - ticker: "SHW"
+    name: "Sherwin-Williams Company"
+    sector: "Materials"
+    industry: "Specialty Chemicals"
+
+  # ── Energy ───────────────────────────────────────────────────────────────────
+  - ticker: "CVX"
+    name: "Chevron Corporation"
+    sector: "Energy"
+    industry: "Oil & Gas Integrated"
+
+# =============================================================================
+# HIDDEN GEMS POOL
+#
+# Replicates the Keyes (1972) methodology:
+#   His DJIA 30        =  our "universe" above (actual DJIA 30 components)
+#   His Forbes random  =  our monthly random draw from this pool
+#
+# Each monthly update randomly selects N stocks from this pool
+# (default N=30 — see config.yaml hidden_gems.n_select).
+# The random seed is the prediction month so selections are stable
+# within a month but rotate across months — exactly as Keyes did.
+#
+# Criteria for inclusion:
+#   • Listed on Nasdaq or NYSE
+#   • Market cap roughly $1B–$50B (mid-cap, mostly)
+#   • Sufficient yfinance data coverage
+#   • NOT already in the Core 30 above
+#   • Diverse sectors to allow cross-sector comparison
+# =============================================================================
+
+hidden_gems_pool:
+
+  # ── Software & Cloud (mid-cap) ────────────────────────────────────────────
+  - ticker: "CDNS"
+    name: "Cadence Design Systems"
+    sector: "Technology"
+    industry: "Software - Application"
+
+  - ticker: "SNPS"
+    name: "Synopsys Inc."
+    sector: "Technology"
+    industry: "Software - Application"
+
+  - ticker: "PAYC"
+    name: "Paycom Software"
+    sector: "Technology"
+    industry: "Software - Application"
+
+  - ticker: "PCTY"
+    name: "Paylocity Holding"
+    sector: "Technology"
+    industry: "Software - Application"
+
+  - ticker: "MANH"
+    name: "Manhattan Associates"
+    sector: "Technology"
+    industry: "Software - Application"
+
+  - ticker: "GWRE"
+    name: "Guidewire Software"
+    sector: "Technology"
+    industry: "Software - Application"
+
+  - ticker: "DOCU"
+    name: "DocuSign Inc."
+    sector: "Technology"
+    industry: "Software - Application"
+
+  - ticker: "ZM"
+    name: "Zoom Video Communications"
+    sector: "Technology"
+    industry: "Software - Application"
+
+  - ticker: "OKTA"
+    name: "Okta Inc."
+    sector: "Technology"
+    industry: "Software - Infrastructure"
+
+  - ticker: "DDOG"
+    name: "Datadog Inc."
+    sector: "Technology"
+    industry: "Software - Infrastructure"
+
+  - ticker: "MDB"
+    name: "MongoDB Inc."
+    sector: "Technology"
+    industry: "Software - Infrastructure"
+
+  - ticker: "ZS"
+    name: "Zscaler Inc."
+    sector: "Technology"
+    industry: "Software - Infrastructure"
+
+  - ticker: "NET"
+    name: "Cloudflare Inc."
+    sector: "Technology"
+    industry: "Software - Infrastructure"
+
+  # ── Semiconductors (mid-cap) ──────────────────────────────────────────────
+  - ticker: "MRVL"
+    name: "Marvell Technology"
+    sector: "Technology"
+    industry: "Semiconductors"
+
+  - ticker: "MPWR"
+    name: "Monolithic Power Systems"
+    sector: "Technology"
+    industry: "Semiconductors"
+
+  - ticker: "ENTG"
+    name: "Entegris Inc."
+    sector: "Technology"
+    industry: "Semiconductors"
+
+  - ticker: "COHU"
+    name: "Cohu Inc."
+    sector: "Technology"
+    industry: "Semiconductor Equipment"
+
+  - ticker: "IPGP"
+    name: "IPG Photonics"
+    sector: "Technology"
+    industry: "Semiconductors"
+
+  # ── Fintech & Financial Services ──────────────────────────────────────────
+  - ticker: "MKTX"
+    name: "MarketAxess Holdings"
+    sector: "Financials"
+    industry: "Capital Markets"
+
+  - ticker: "LPLA"
+    name: "LPL Financial Holdings"
+    sector: "Financials"
+    industry: "Capital Markets"
+
+  - ticker: "SEIC"
+    name: "SEI Investments Co."
+    sector: "Financials"
+    industry: "Asset Management"
+
+  - ticker: "SSNC"
+    name: "SS&C Technologies"
+    sector: "Technology"
+    industry: "Software - Application"
+
+  - ticker: "CBOE"
+    name: "Cboe Global Markets"
+    sector: "Financials"
+    industry: "Financial Exchanges"
+
+  - ticker: "NDAQ"
+    name: "Nasdaq Inc."
+    sector: "Financials"
+    industry: "Financial Exchanges"
+
+  # ── Healthcare & Medtech ──────────────────────────────────────────────────
+  - ticker: "PODD"
+    name: "Insulet Corporation"
+    sector: "Healthcare"
+    industry: "Medical Devices"
+
+  - ticker: "EXAS"
+    name: "Exact Sciences"
+    sector: "Healthcare"
+    industry: "Diagnostics & Research"
+
+  - ticker: "NEOG"
+    name: "Neogen Corporation"
+    sector: "Healthcare"
+    industry: "Diagnostics & Research"
+
+  - ticker: "OMCL"
+    name: "Omnicell Inc."
+    sector: "Healthcare"
+    industry: "Health Information Services"
+
+  - ticker: "QDEL"
+    name: "QuidelOrtho Corp."
+    sector: "Healthcare"
+    industry: "Diagnostics & Research"
+
+  - ticker: "ACAD"
+    name: "ACADIA Pharmaceuticals"
+    sector: "Healthcare"
+    industry: "Biotechnology"
+
+  - ticker: "JAZZ"
+    name: "Jazz Pharmaceuticals"
+    sector: "Healthcare"
+    industry: "Drug Manufacturers - Specialty"
+
+  - ticker: "RARE"
+    name: "Ultragenyx Pharmaceutical"
+    sector: "Healthcare"
+    industry: "Biotechnology"
+
+  - ticker: "IDXX"
+    name: "IDEXX Laboratories"
+    sector: "Healthcare"
+    industry: "Diagnostics & Research"
+
+  - ticker: "TECH"
+    name: "Bio-Techne Corp."
+    sector: "Healthcare"
+    industry: "Biotechnology"
+
+  # ── Consumer Brands (mid-cap) ─────────────────────────────────────────────
+  - ticker: "YETI"
+    name: "YETI Holdings"
+    sector: "Consumer Discretionary"
+    industry: "Leisure"
+
+  - ticker: "FIVE"
+    name: "Five Below Inc."
+    sector: "Consumer Discretionary"
+    industry: "Specialty Retail"
+
+  - ticker: "OLLI"
+    name: "Ollie's Bargain Outlet"
+    sector: "Consumer Discretionary"
+    industry: "Specialty Retail"
+
+  - ticker: "DECK"
+    name: "Deckers Outdoor Corp"
+    sector: "Consumer Discretionary"
+    industry: "Footwear & Accessories"
+
+  - ticker: "POOL"
+    name: "Pool Corporation"
+    sector: "Consumer Discretionary"
+    industry: "Industrial Distribution"
+
+  - ticker: "RH"
+    name: "RH (Restoration Hardware)"
+    sector: "Consumer Discretionary"
+    industry: "Home Furnishings"
+
+  - ticker: "LULU"
+    name: "Lululemon Athletica"
+    sector: "Consumer Discretionary"
+    industry: "Apparel"
+
+  - ticker: "DKS"
+    name: "Dick's Sporting Goods"
+    sector: "Consumer Discretionary"
+    industry: "Specialty Retail"
+
+  # ── Consumer Staples (smaller) ────────────────────────────────────────────
+  - ticker: "CHEF"
+    name: "The Chefs' Warehouse"
+    sector: "Consumer Staples"
+    industry: "Food Distribution"
+
+  - ticker: "WSO"
+    name: "Watsco Inc."
+    sector: "Industrials"
+    industry: "Industrial Distribution"
+
+  # ── Industrials ───────────────────────────────────────────────────────────
+  - ticker: "GNRC"
+    name: "Generac Holdings"
+    sector: "Industrials"
+    industry: "Specialty Industrial Machinery"
+
+  - ticker: "GTLS"
+    name: "Chart Industries"
+    sector: "Industrials"
+    industry: "Specialty Industrial Machinery"
+
+  - ticker: "HURN"
+    name: "Huron Consulting Group"
+    sector: "Industrials"
+    industry: "Consulting Services"
+
+  - ticker: "ITRI"
+    name: "Itron Inc."
+    sector: "Industrials"
+    industry: "Scientific & Technical Instruments"
+
+  - ticker: "TRMK"
+    name: "Trustmark Corporation"
+    sector: "Financials"
+    industry: "Banks - Regional"
+
+  - ticker: "EXPO"
+    name: "Exponent Inc."
+    sector: "Industrials"
+    industry: "Consulting Services"
+
+  # ── Real Estate & Infrastructure ──────────────────────────────────────────
+  - ticker: "REXR"
+    name: "Rexford Industrial Realty"
+    sector: "Real Estate"
+    industry: "REIT - Industrial"
+
+  - ticker: "CBRE"
+    name: "CBRE Group Inc."
+    sector: "Real Estate"
+    industry: "Real Estate Services"
+
+  # ── Energy (smaller / clean energy) ──────────────────────────────────────
+  - ticker: "ENPH"
+    name: "Enphase Energy"
+    sector: "Technology"
+    industry: "Solar"
+
+  - ticker: "FANG"
+    name: "Diamondback Energy"
+    sector: "Energy"
+    industry: "Oil & Gas E&P"
+
+  - ticker: "CIVI"
+    name: "Civitas Resources"
+    sector: "Energy"
+    industry: "Oil & Gas E&P"
+
+  # ── Communication / Media ─────────────────────────────────────────────────
+  - ticker: "ZG"
+    name: "Zillow Group Inc."
+    sector: "Communication Services"
+    industry: "Internet Content & Information"
+
+  - ticker: "TTD"
+    name: "The Trade Desk"
+    sector: "Technology"
+    industry: "Software - Application"
+
+  - ticker: "ROKU"
+    name: "Roku Inc."
+    sector: "Communication Services"
+    industry: "Entertainment"
+
+  - ticker: "MGNI"
+    name: "Magnite Inc."
+    sector: "Technology"
+    industry: "Software - Application"
+
+  # ── Biotech (speculative small-cap) ──────────────────────────────────────
+  - ticker: "SRRK"
+    name: "Scholar Rock Holding"
+    sector: "Healthcare"
+    industry: "Biotechnology"
+
+  - ticker: "PCVX"
+    name: "Vaxcyte Inc."
+    sector: "Healthcare"
+    industry: "Biotechnology"
