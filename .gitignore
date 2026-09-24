@@ -57,3 +57,6 @@ pipeline_out.txt
 
 # V2 research artefacts (generated provenance/registry data — reproducible, not source)
 artifacts/
+
+# V2 research data layers (generated, reproducible from source + manifests)
+data/research_v2/
