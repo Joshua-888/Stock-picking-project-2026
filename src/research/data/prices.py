@@ -109,10 +109,21 @@ def parse_yahoo_chart(payload, ticker):
     return frame
 
 
-def fetch_prices(ticker, range_="5y", interval="1d"):
-    """Fetch real prices for ``ticker``; raises when the provider is unusable."""
+def fetch_chart_payload(ticker, range_="5y", interval="1d"):
+    """Fetch the raw Yahoo chart payload (Bronze-able exactly as returned).
+
+    Raises :class:`PricesUnavailableError` when the provider cannot supply the
+    ticker (e.g. delisted/acquired symbols return HTTP 404); a missing price
+    history is a hard failure, never substituted.
+    """
     url = "%s?range=%s&interval=%s&events=split,div" % (YAHOO_CHART_URL % ticker, range_, interval)
-    payload = _http_get_json(url)
+    return _http_get_json(url)
+
+
+def fetch_prices(ticker, range_="5y", interval="1d", payload=None):
+    """Fetch real prices for ``ticker``; raises when the provider is unusable."""
+    if payload is None:
+        payload = fetch_chart_payload(ticker, range_=range_, interval=interval)
     return parse_yahoo_chart(payload, ticker)
 
 

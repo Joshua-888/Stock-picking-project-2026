@@ -35,6 +35,28 @@ FRED_CURRENT_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=%s"
 REQUEST_TIMEOUT = 30
 REQUIRED_COLUMNS = ("series_id", "observation_date", "vintage_date", "release_date", "available_at")
 
+# Macro is EXCLUDED from the initial research dataset. The vintage contract and
+# leakage guard above are kept intentionally (so a future macro track inherits a
+# safe foundation), but no macro observation may gate or block the initial
+# dataset, and macro features are not part of the initial feature set.
+EXCLUDED_FROM_INITIAL_RESEARCH = True
+EXCLUSION_STATUS = "EXCLUDED_FROM_INITIAL_RESEARCH"
+EXCLUSION_REASON = (
+    "macroeconomic vintages are not required for the initial 12-month "
+    "benchmark-relative research dataset; excluded so macro data quality cannot "
+    "block certification, while the vintage/leakage guard is retained for a "
+    "future, separately reviewed macro track"
+)
+
+
+def exclusion_note():
+    """Return the explicit macro-exclusion marker for dataset certification."""
+    return {
+        "status": EXCLUSION_STATUS,
+        "excludedFromInitialResearch": EXCLUDED_FROM_INITIAL_RESEARCH,
+        "reason": EXCLUSION_REASON,
+    }
+
 
 class MacroError(RuntimeError):
     """Raised when macro data is malformed or temporally unsafe."""

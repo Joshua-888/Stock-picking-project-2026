@@ -10,9 +10,11 @@ by the research-mode gate before a manifest is written.
 from __future__ import annotations
 
 import datetime as _dt
+from pathlib import Path
 
 import pandas as pd
 
+from src.research.fingerprints import fingerprint_file, fingerprint_obj
 from src.research.ids import dataset_id as make_dataset_id
 from src.research.immutability import save_immutable
 from src.research.manifests import DatasetManifest
@@ -32,8 +34,27 @@ class ManifestingError(RuntimeError):
     """Raised when a dataset cannot be honestly manifested."""
 
 
+CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "config.yaml"
+
+
 def _now_iso():
     return _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+
+def config_fingerprint(config=None):
+    """Deterministic SHA-256 of the research configuration.
+
+    Independent of the dataset fingerprint. Priority:
+
+    * an explicit mapping -> canonical-JSON digest of that mapping;
+    * an explicit path/string hash is not accepted (values only);
+    * otherwise the bytes of ``config/config.yaml``.
+    """
+    if isinstance(config, dict):
+        return fingerprint_obj(dict(config))
+    if config is not None:
+        raise ManifestingError("config must be a mapping when supplied, got %s" % type(config).__name__)
+    return fingerprint_file(CONFIG_PATH)
 
 
 def dataset_payload(name, universe_id, period_start, period_end, schema, source_fingerprints, dataset_fingerprint):
@@ -66,6 +87,7 @@ def build_gold_manifest(
     known_limitations=(),
     root=None,
     notes="",
+    config=None,
 ):
     """Build (and validate) a ``DatasetManifest`` for one GOLD dataset.
 
@@ -109,7 +131,7 @@ def build_gold_manifest(
         period_end=str(period_end),
         row_count=int(len(frame)),
         schema_version=SCHEMA_VERSION,
-        config_fingerprint=dict(source_fingerprints).get("__config__", dataset_fingerprint),
+        config_fingerprint=config_fingerprint(config),
         source_fingerprints=dict(source_fingerprints),
         dataset_fingerprint=dataset_fingerprint,
         pit_status=pit_status,
@@ -149,6 +171,7 @@ def build_and_persist_gold(
     known_limitations=(),
     root=None,
     notes="",
+    config=None,
 ):
     """Convenience wrapper: fingerprint, manifest, persist one GOLD dataset.
 
@@ -179,6 +202,7 @@ def build_and_persist_gold(
         known_limitations=known_limitations,
         root=root,
         notes=notes,
+        config=config,
     )
     persisted = persist_manifest(manifest, root=root, name=name)
     persisted["table"] = table
