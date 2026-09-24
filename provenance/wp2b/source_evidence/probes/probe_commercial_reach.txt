@@ -1,0 +1,12 @@
+### Nasdaq Data Link (Sharadar) reachability ###
+ndl_sharadar=403
+### eodhd demo (delisted AAPL.US style) ###
+Forbidden
+### eodhd delisted list endpoint ###
+eodhd_exchange=403
+### Norgate page ###
+norgate=200
+### Wayback CDX for iShares IVV holdings ###
+
+### SEC full-text delisting ###
+sec_ft=200

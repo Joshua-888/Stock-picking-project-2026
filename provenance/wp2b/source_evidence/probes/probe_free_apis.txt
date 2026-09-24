@@ -1,0 +1,21 @@
+### Alpha Vantage demo (IBM only demo key) ###
+{
+    "Information": "The **demo** API key is for demo purposes only. Please claim your free API key at (https://www.alphavantage.co/support/#api-key) to explore our full API offerings. It takes fewer
+### Alpha Vantage demo delisted check ###
+{
+    "Information": "The **demo** API key is for demo purposes only. Please claim your free API key at (https://www.alphavantage.co/support/#api-key) to explore our full API offerings. It takes fewer than 20 seconds."
+}
+### Tiingo (no key) ###
+tiingo=403
+### FMP (no key) ###
+{
+  "Error Message": "Invalid API KEY. Feel free to create a Free API Key or visit https://site.financialmodelingprep.com/faqs?search=why-is-my-api-key-invalid for more information."
+}
+### Twelve Data demo ###
+{"code":401,"message":"The 'demo' API key is only used for initial familiarity. To become a full user, you can request your own API key at https://twelvedata.com/pricing. It is absolutely free, and it
+### marketstack ###
+marketstack=401
+### stooq world ###
+<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"></head><body><noscript>This site requires JavaScript t
+### investing.com ###
+investing=403

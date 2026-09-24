@@ -1,0 +1,15 @@
+### stockanalysis.com delisted AAPL history API ###
+{"status":200,"data":[{"t":"2026-09-24","o":336.72,"h":338.91,"l":334.3,"c":335.92,"a":335.92,"v":24236309,"ch":-0.33},{"t":"2026-09-23","o":341.075,"h":341.8,"l":335.5,"c":337.02,"a":337.02,"v":31353328,"ch":-0.8},{"t":"2026-09-22","o":340.135,"h":345.34,"l":338.75,"c":339.75,"a":339.75,"v":3949452
+### stockanalysis.com delisted ticker (LEHMQ) page ###
+sa_LEHMQ=404
+sa_TWTR=200
+### stockanalysis delisted list ###
+sa_delisted_list=404
+### Alpaca delisted ###
+alpaca=401
+### FMP delisted endpoint demo ###
+{
+  "Error Message": "Invalid API KEY. Feel free to create a Free API Key or visit https://site.financialmodelingprep.com/faqs?search=why-is-my-api-key-invalid for more information."
+}
+### Wayback stockanalysis LEHMQ ###
+wayback_sa=200

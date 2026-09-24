@@ -1,0 +1,493 @@
+{
+  "bulk_data_committed": false,
+  "bundle_fingerprint": "2c5c14290b3aa5d460396a497aea2bc49ebb00e62a72de51cc28b3b76e10a6c1",
+  "commercial_sources": [
+    {
+      "access_tier": "paid subscription (API token)",
+      "capabilities": [
+        "delisted_prices",
+        "corporate_actions",
+        "identities"
+      ],
+      "cost": "~USD 19.99-99.99/mo (~199-999/yr)",
+      "cost_source": "vendor page (public figure)",
+      "cost_verified": "PRICE_NOT_VERIFIED",
+      "credential_env": [
+        "EODHD_API_TOKEN"
+      ],
+      "endpoint": "https://eodhd.com/api/eod/{TICKER}.{EXCHANGE}",
+      "license_terms_note": "commercial vendor subscription; EODHD Terms of Service govern use; no historical index-membership endpoint is published",
+      "redistribution": "REDISTRIBUTION_PROHIBITED (raw vendor data; internal research use only)",
+      "source": "eodhd"
+    },
+    {
+      "access_tier": "paid subscription (API key, Nasdaq Data Link)",
+      "capabilities": [
+        "delisted_prices",
+        "historical_universe",
+        "corporate_actions"
+      ],
+      "cost": "PRICE_NOT_VERIFIED",
+      "cost_source": "not verified (no public figure captured)",
+      "cost_verified": "PRICE_NOT_VERIFIED",
+      "credential_env": [
+        "NASDAQ_DATA_LINK_API_KEY",
+        "QUANDL_API_KEY",
+        "SHARADAR_API_KEY"
+      ],
+      "endpoint": "https://data.nasdaq.com/api/v3/datatables/{SEP|SF1|SP500}.json",
+      "license_terms_note": "Nasdaq Data Link Terms of Service plus Sharadar vendor licence; SP500 daily constituents carry no announcement dates",
+      "redistribution": "REDISTRIBUTION_PROHIBITED (licensed vendor data; internal research use only)",
+      "source": "sharadar_via_nasdaq_data_link"
+    },
+    {
+      "access_tier": "paid licence (desktop data subscription)",
+      "capabilities": [
+        "delisted_prices",
+        "historical_universe",
+        "corporate_actions",
+        "identities"
+      ],
+      "cost": "US ~USD 630/yr Platinum (vendor page claim)",
+      "cost_source": "vendor page (public figure)",
+      "cost_verified": "PRICE_NOT_VERIFIED",
+      "credential_env": [],
+      "endpoint": "https://norgatedata.com/ (licensed data delivery, not a public API)",
+      "license_terms_note": "vendor licence required; index constituents need a top tier; delisted coverage is a vendor claim (25,222 delisted 1950-2022)",
+      "redistribution": "REDISTRIBUTION_PROHIBITED (vendor licence; internal research use only)",
+      "source": "norgate_data"
+    },
+    {
+      "access_tier": "institutional licence",
+      "capabilities": [
+        "delisted_prices",
+        "historical_universe",
+        "corporate_actions",
+        "identities"
+      ],
+      "cost": "PRICE_NOT_VERIFIED",
+      "cost_source": "not verified (institutional quote required)",
+      "cost_verified": "PRICE_NOT_VERIFIED",
+      "credential_env": [],
+      "endpoint": "institutional distribution (WRDS / CRSP / Compustat)",
+      "license_terms_note": "institutional licence; PERMNO permanent ids and delisting returns; access restricted to the licensed institution",
+      "redistribution": "REDISTRIBUTION_PROHIBITED (institutional licence; no redistribution)",
+      "source": "crsp_compustat"
+    }
+  ],
+  "evidence_files": [
+    {
+      "bytes": 298,
+      "captured_at": "2026-09-24T21:46:32Z",
+      "evidence_file": "probe_commercial_reach.txt",
+      "relative_path": "provenance/wp2b/source_evidence/probes/probe_commercial_reach.txt",
+      "sha256": "33d0ea90a2614c7641c950cbb5aa1a3a62087218d6863f09ef04188033f8b8a4"
+    },
+    {
+      "bytes": 216,
+      "captured_at": "2026-09-24T21:45:43Z",
+      "evidence_file": "probe_delisted_dated.txt",
+      "relative_path": "provenance/wp2b/source_evidence/probes/probe_delisted_dated.txt",
+      "sha256": "dde409382550234eb5d9022785696e8ed88260886fffb853334d0b0a5f477d1c"
+    },
+    {
+      "bytes": 1221,
+      "captured_at": "2026-09-24T21:45:14Z",
+      "evidence_file": "probe_free_apis.txt",
+      "relative_path": "provenance/wp2b/source_evidence/probes/probe_free_apis.txt",
+      "sha256": "60c901a47577040ad28783a6432e4385a3beffbd07924b2ad425b2cf6557905a"
+    },
+    {
+      "bytes": 796,
+      "captured_at": "2026-09-24T21:49:07Z",
+      "evidence_file": "probe_free_delisted_2.txt",
+      "relative_path": "provenance/wp2b/source_evidence/probes/probe_free_delisted_2.txt",
+      "sha256": "c274b45d2c0a70b4bc6140c9a530b99d5592d442189862f8ab69ca006fabe8a7"
+    }
+  ],
+  "generator": {
+    "path": "scripts/research_v2/wp2b_probe_sources.py",
+    "sha256": "64b7300def1ad501c0f2346cd412409d528ba8aa84f642d34c2476f81b46f6f4",
+    "version": "wp2b_probe_sources/1"
+  },
+  "git_commit": "636bb42c9ab80e7d3ceebc08cda20968a2974fd7",
+  "live_divergences": [],
+  "manifest_schema_version": "wp2b_source_evidence_manifest_v1",
+  "mode": "offline_deterministic",
+  "notes": "Raw probe snippets only (tiny, documentary). Vendor bulk data is never committed. Offline mode is deterministic: retrieval timestamps come from the frozen capture registry.",
+  "probes": [
+    {
+      "category": "delisted_prices",
+      "credential_env": [],
+      "endpoint": "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?period1={epoch}&period2={epoch}",
+      "evidence_file": "probe_delisted_dated.txt",
+      "evidence_sha256": "dde409382550234eb5d9022785696e8ed88260886fffb853334d0b0a5f477d1c",
+      "extracted_lines": [
+        "LEH      HTTP 404",
+        "ENRNQ    HTTP 404",
+        "BSC      HTTP 404",
+        "CFC      HTTP 404",
+        "WAMUQ    HTTP 404",
+        "YHOO     HTTP 404",
+        "TWTR     HTTP 404",
+        "ATVI     HTTP 404",
+        "VMW      HTTP 404",
+        "CERN     HTTP 404",
+        "XLNX     HTTP 404",
+        "ANTM     HTTP 404"
+      ],
+      "http_status": 404,
+      "license_access_note": "public unauthenticated endpoint; no credential used for this probe; vendor Terms of Service apply and automated retrieval may be rate-limited or prohibited -- probe is a single documentation request, bulk data is NOT redistributed",
+      "method": "GET",
+      "note": "historical daily prices exist only for currently listed tickers; every tested delisted/acquired/renamed constituent returned 404",
+      "outcome": "absent",
+      "probe": "yahoo_chart_delisted_prices",
+      "retrieved_at": "2026-09-24T21:45:43Z",
+      "snippet_sha256": "bd2dea087a02e1f083e1180be9887085626a64007b1bc95565ae11e8e68f1e8e",
+      "source": "Yahoo Finance chart API (yfinance)",
+      "status_text": null
+    },
+    {
+      "category": "delisted_prices",
+      "credential_env": [
+        "ALPHAVANTAGE_API_KEY"
+      ],
+      "endpoint": "https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=IBM&apikey=demo",
+      "evidence_file": "probe_free_apis.txt",
+      "evidence_sha256": "60c901a47577040ad28783a6432e4385a3beffbd07924b2ad425b2cf6557905a",
+      "extracted_lines": [
+        "    \"Information\": \"The **demo** API key is for demo purposes only. Please claim your free API key at (https://www.alphavantage.co/support/#api-key) to explore our full API offerings. It takes fewer",
+        "    \"Information\": \"The **demo** API key is for demo purposes only. Please claim your free API key at (https://www.alphavantage.co/support/#api-key) to explore our full API offerings. It takes fewer than 20 seconds.\""
+      ],
+      "http_status": null,
+      "license_access_note": "public unauthenticated endpoint; no credential used for this probe; vendor Terms of Service apply and automated retrieval may be rate-limited or prohibited -- probe is a single documentation request, bulk data is NOT redistributed",
+      "method": "GET",
+      "note": "demo key is restricted to a single demo symbol; not usable for delisted coverage",
+      "outcome": "blocked_credential_or_terms",
+      "probe": "alphavantage_demo_quote",
+      "retrieved_at": "2026-09-24T21:45:14Z",
+      "snippet_sha256": "a5f25427c5e0985fe0ea845a8a40f338207a2227b9c495aeb39b2495b2bdce8d",
+      "source": "Alpha Vantage",
+      "status_text": "\"Information\": \"The **demo** API key is for demo purposes only. Please claim your free API key at (https://www.alphavantage.co/support/#api-key) to explore our full API offerings. It takes fewer; \"Information\": \"The **demo** API key is for demo purposes only. Please claim your free API key at (https://www.alphavantage.co/support/#api-key) to explore our full API offerings. It takes fewer than 20 seconds.\""
+    },
+    {
+      "category": "delisted_prices",
+      "credential_env": [
+        "TIINGO_API_KEY"
+      ],
+      "endpoint": "https://api.tiingo.com/tiingo/daily/{ticker}/prices",
+      "evidence_file": "probe_free_apis.txt",
+      "evidence_sha256": "60c901a47577040ad28783a6432e4385a3beffbd07924b2ad425b2cf6557905a",
+      "extracted_lines": [
+        "tiingo=403"
+      ],
+      "http_status": 403,
+      "license_access_note": "public unauthenticated endpoint; no credential used for this probe; vendor Terms of Service apply and automated retrieval may be rate-limited or prohibited -- probe is a single documentation request, bulk data is NOT redistributed",
+      "method": "GET",
+      "note": "401/403 without an API token",
+      "outcome": "blocked_credential_or_terms",
+      "probe": "tiingo_daily_prices",
+      "retrieved_at": "2026-09-24T21:45:14Z",
+      "snippet_sha256": "1a1172750874d90cf24b85e21e7ed239512fbb951dfd94c9a3b4313b74315e25",
+      "source": "Tiingo",
+      "status_text": null
+    },
+    {
+      "category": "delisted_prices",
+      "credential_env": [
+        "FMP_API_KEY"
+      ],
+      "endpoint": "https://financialmodelingprep.com/api/v3/delisted-companies?apikey={key}",
+      "evidence_file": "probe_free_apis.txt",
+      "evidence_sha256": "60c901a47577040ad28783a6432e4385a3beffbd07924b2ad425b2cf6557905a",
+      "extracted_lines": [
+        "  \"Error Message\": \"Invalid API KEY. Feel free to create a Free API Key or visit https://site.financialmodelingprep.com/faqs?search=why-is-my-api-key-invalid for more information.\""
+      ],
+      "http_status": null,
+      "license_access_note": "public unauthenticated endpoint; no credential used for this probe; vendor Terms of Service apply and automated retrieval may be rate-limited or prohibited -- probe is a single documentation request, bulk data is NOT redistributed",
+      "method": "GET",
+      "note": "rejects the request key; no delisted price data returned",
+      "outcome": "blocked_credential_or_terms",
+      "probe": "financialmodelingprep_delisted",
+      "retrieved_at": "2026-09-24T21:45:14Z",
+      "snippet_sha256": "93c4a3027e98289e31ff1aac5635cf876c945af7594c879e6f764fffb11cf6ce",
+      "source": "Financial Modeling Prep",
+      "status_text": "\"Error Message\": \"Invalid API KEY. Feel free to create a Free API Key or visit https://site.financialmodelingprep.com/faqs?search=why-is-my-api-key-invalid for more information.\""
+    },
+    {
+      "category": "delisted_prices",
+      "credential_env": [
+        "TWELVE_DATA_API_KEY"
+      ],
+      "endpoint": "https://api.twelvedata.com/time_series?symbol={ticker}&apikey=demo",
+      "evidence_file": "probe_free_apis.txt",
+      "evidence_sha256": "60c901a47577040ad28783a6432e4385a3beffbd07924b2ad425b2cf6557905a",
+      "extracted_lines": [
+        "{\"code\":401,\"message\":\"The 'demo' API key is only used for initial familiarity. To become a full user, you can request your own API key at https://twelvedata.com/pricing. It is absolutely free, and it"
+      ],
+      "http_status": 401,
+      "license_access_note": "public unauthenticated endpoint; no credential used for this probe; vendor Terms of Service apply and automated retrieval may be rate-limited or prohibited -- probe is a single documentation request, bulk data is NOT redistributed",
+      "method": "GET",
+      "note": "demo key refused; requires a claimed key",
+      "outcome": "blocked_credential_or_terms",
+      "probe": "twelvedata_demo",
+      "retrieved_at": "2026-09-24T21:45:14Z",
+      "snippet_sha256": "c27be3b73de9c05510735dfab51763964a7934b4e8ede31b370dd9fc9eef28f5",
+      "source": "Twelve Data",
+      "status_text": null
+    },
+    {
+      "category": "delisted_prices",
+      "credential_env": [
+        "MARKETSTACK_API_KEY"
+      ],
+      "endpoint": "https://api.marketstack.com/v1/eod?symbols={ticker}",
+      "evidence_file": "probe_free_apis.txt",
+      "evidence_sha256": "60c901a47577040ad28783a6432e4385a3beffbd07924b2ad425b2cf6557905a",
+      "extracted_lines": [
+        "marketstack=401"
+      ],
+      "http_status": 401,
+      "license_access_note": "public unauthenticated endpoint; no credential used for this probe; vendor Terms of Service apply and automated retrieval may be rate-limited or prohibited -- probe is a single documentation request, bulk data is NOT redistributed",
+      "method": "GET",
+      "note": "401 without a key",
+      "outcome": "blocked_credential_or_terms",
+      "probe": "marketstack_eod",
+      "retrieved_at": "2026-09-24T21:45:14Z",
+      "snippet_sha256": "ef426d9d21768d8a74ad8380874206f2cf214dd3b1968f2af60799ad60c9e9c7",
+      "source": "Marketstack",
+      "status_text": null
+    },
+    {
+      "category": "delisted_prices",
+      "credential_env": [],
+      "endpoint": "https://stooq.com/q/d/?s={ticker}",
+      "evidence_file": "probe_free_apis.txt",
+      "evidence_sha256": "60c901a47577040ad28783a6432e4385a3beffbd07924b2ad425b2cf6557905a",
+      "extracted_lines": [
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex,nofollow\"></head><body><noscript>This site requires JavaScript t"
+      ],
+      "http_status": null,
+      "license_access_note": "public unauthenticated endpoint; no credential used for this probe; vendor Terms of Service apply and automated retrieval may be rate-limited or prohibited -- probe is a single documentation request, bulk data is NOT redistributed",
+      "method": "GET",
+      "note": "JavaScript bot wall; automated retrieval blocked",
+      "outcome": "blocked_automation",
+      "probe": "stooq_world",
+      "retrieved_at": "2026-09-24T21:45:14Z",
+      "snippet_sha256": "9cc23a778ddabb9328ff2db770228c37563279a498efb3a20992622e1b073b52",
+      "source": "Stooq",
+      "status_text": "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex,nofollow\"></head><body><noscript>This site requires JavaScript t"
+    },
+    {
+      "category": "delisted_prices",
+      "credential_env": [],
+      "endpoint": "https://www.investing.com/equities/{slug}-historical-data",
+      "evidence_file": "probe_free_apis.txt",
+      "evidence_sha256": "60c901a47577040ad28783a6432e4385a3beffbd07924b2ad425b2cf6557905a",
+      "extracted_lines": [
+        "investing=403"
+      ],
+      "http_status": 403,
+      "license_access_note": "public unauthenticated endpoint; no credential used for this probe; vendor Terms of Service apply and automated retrieval may be rate-limited or prohibited -- probe is a single documentation request, bulk data is NOT redistributed",
+      "method": "GET",
+      "note": "403 on automated request",
+      "outcome": "blocked_credential_or_terms",
+      "probe": "investing_com_history",
+      "retrieved_at": "2026-09-24T21:45:14Z",
+      "snippet_sha256": "01e313918cfe1002e74be7c068cdd8cf5537e02eccf74569fd51d3c4f3df1f32",
+      "source": "Investing.com",
+      "status_text": null
+    },
+    {
+      "category": "delisted_prices",
+      "credential_env": [],
+      "endpoint": "https://stockanalysis.com/list/delisted-stocks/",
+      "evidence_file": "probe_free_delisted_2.txt",
+      "evidence_sha256": "c274b45d2c0a70b4bc6140c9a530b99d5592d442189862f8ab69ca006fabe8a7",
+      "extracted_lines": [
+        "sa_delisted_list=404"
+      ],
+      "http_status": 404,
+      "license_access_note": "public unauthenticated endpoint; no credential used for this probe; vendor Terms of Service apply and automated retrieval may be rate-limited or prohibited -- probe is a single documentation request, bulk data is NOT redistributed",
+      "method": "GET",
+      "note": "no delisted-stock listing endpoint; only live tickers resolve",
+      "outcome": "absent",
+      "probe": "stockanalysis_delisted_list",
+      "retrieved_at": "2026-09-24T21:49:07Z",
+      "snippet_sha256": "b3b3857b41124bab86b3c45f8641a81fd48e60dbe4f2956e69e115ec7ad39ae6",
+      "source": "stockanalysis.com",
+      "status_text": null
+    },
+    {
+      "category": "delisted_prices",
+      "credential_env": [],
+      "endpoint": "https://stockanalysis.com/stocks/{ticker}/history/",
+      "evidence_file": "probe_free_delisted_2.txt",
+      "evidence_sha256": "c274b45d2c0a70b4bc6140c9a530b99d5592d442189862f8ab69ca006fabe8a7",
+      "extracted_lines": [
+        "sa_LEHMQ=404",
+        "sa_TWTR=200"
+      ],
+      "http_status": 404,
+      "license_access_note": "public unauthenticated endpoint; no credential used for this probe; vendor Terms of Service apply and automated retrieval may be rate-limited or prohibited -- probe is a single documentation request, bulk data is NOT redistributed",
+      "method": "GET",
+      "note": "delisted LEHMQ 404; live TWTR 200 -- live-only coverage",
+      "outcome": "mixed_absent_live",
+      "probe": "stockanalysis_delisted_ticker",
+      "retrieved_at": "2026-09-24T21:49:07Z",
+      "snippet_sha256": "6eb13216d1f4e2094392c4b9f80f0585169fdb572e1dbf69184936a6dcd52f25",
+      "source": "stockanalysis.com",
+      "status_text": null
+    },
+    {
+      "category": "delisted_prices",
+      "credential_env": [
+        "APCA_API_KEY_ID"
+      ],
+      "endpoint": "https://data.alpaca.markets/v2/stocks/{ticker}/bars",
+      "evidence_file": "probe_free_delisted_2.txt",
+      "evidence_sha256": "c274b45d2c0a70b4bc6140c9a530b99d5592d442189862f8ab69ca006fabe8a7",
+      "extracted_lines": [
+        "alpaca=401"
+      ],
+      "http_status": 401,
+      "license_access_note": "public unauthenticated endpoint; no credential used for this probe; vendor Terms of Service apply and automated retrieval may be rate-limited or prohibited -- probe is a single documentation request, bulk data is NOT redistributed",
+      "method": "GET",
+      "note": "401 without API keys",
+      "outcome": "blocked_credential_or_terms",
+      "probe": "alpaca_market_data",
+      "retrieved_at": "2026-09-24T21:49:07Z",
+      "snippet_sha256": "df0618069975ab9bf890df4f2f8653e9ecf7ceea63689fa9740bec3691a619ce",
+      "source": "Alpaca",
+      "status_text": null
+    },
+    {
+      "category": "delisted_prices",
+      "credential_env": [],
+      "endpoint": "https://web.archive.org/web/{timestamp}/{url}",
+      "evidence_file": "probe_free_delisted_2.txt",
+      "evidence_sha256": "c274b45d2c0a70b4bc6140c9a530b99d5592d442189862f8ab69ca006fabe8a7",
+      "extracted_lines": [
+        "wayback_sa=200"
+      ],
+      "http_status": 200,
+      "license_access_note": "public unauthenticated endpoint; no credential used for this probe; vendor Terms of Service apply and automated retrieval may be rate-limited or prohibited -- probe is a single documentation request, bulk data is NOT redistributed",
+      "method": "GET",
+      "note": "reachable, but snapshots are not a systematic survivorship-free price feed",
+      "outcome": "reachable",
+      "probe": "wayback_snapshot",
+      "retrieved_at": "2026-09-24T21:49:07Z",
+      "snippet_sha256": "5ed91f25e6b16f6742675b6dee36dbd00798943a9b3817616ce4fddfeefba338",
+      "source": "Internet Archive Wayback Machine",
+      "status_text": null
+    },
+    {
+      "category": "commercial_reachability",
+      "credential_env": [
+        "NASDAQ_DATA_LINK_API_KEY",
+        "QUANDL_API_KEY",
+        "SHARADAR_API_KEY"
+      ],
+      "endpoint": "https://data.nasdaq.com/api/v3/datatables/{table}.json",
+      "evidence_file": "probe_commercial_reach.txt",
+      "evidence_sha256": "33d0ea90a2614c7641c950cbb5aa1a3a62087218d6863f09ef04188033f8b8a4",
+      "extracted_lines": [
+        "ndl_sharadar=403"
+      ],
+      "http_status": 403,
+      "license_access_note": "commercial subscription required; Nasdaq Data Link Terms of Service and Sharadar vendor licence apply; data is licensed for internal research and redistribution is restricted",
+      "method": "GET",
+      "note": "403 without a subscription key",
+      "outcome": "blocked_credential_or_terms",
+      "probe": "nasdaq_data_link_sharadar",
+      "retrieved_at": "2026-09-24T21:46:32Z",
+      "snippet_sha256": "8f02483a08a43ca44057d89411f4e14e8857513929d69895692844b21d516cde",
+      "source": "Nasdaq Data Link / Sharadar (SEP, SF1, SP500)",
+      "status_text": null
+    },
+    {
+      "category": "commercial_reachability",
+      "credential_env": [
+        "EODHD_API_TOKEN"
+      ],
+      "endpoint": "https://eodhd.com/api/exchange-symbol-list/{exchange}?delisted=1&api_token={key}",
+      "evidence_file": "probe_commercial_reach.txt",
+      "evidence_sha256": "33d0ea90a2614c7641c950cbb5aa1a3a62087218d6863f09ef04188033f8b8a4",
+      "extracted_lines": [
+        "eodhd_exchange=403"
+      ],
+      "http_status": 403,
+      "license_access_note": "commercial subscription required; EODHD Terms of Service apply; redistribution of raw vendor data is prohibited",
+      "method": "GET",
+      "note": "403 without an API token",
+      "outcome": "blocked_credential_or_terms",
+      "probe": "eodhd_delisted_symbol_list",
+      "retrieved_at": "2026-09-24T21:46:32Z",
+      "snippet_sha256": "072af4c49357263cd61fb0b510597bacc8b1f92a1ecdd07aa7a56775eadb488d",
+      "source": "EODHD (eodhd.com)",
+      "status_text": null
+    },
+    {
+      "category": "commercial_reachability",
+      "credential_env": [
+        "EODHD_API_TOKEN"
+      ],
+      "endpoint": "https://eodhd.com/api/eod/{ticker}.US?api_token={key}",
+      "evidence_file": "probe_commercial_reach.txt",
+      "evidence_sha256": "33d0ea90a2614c7641c950cbb5aa1a3a62087218d6863f09ef04188033f8b8a4",
+      "extracted_lines": [
+        "Forbidden"
+      ],
+      "http_status": null,
+      "license_access_note": "commercial subscription required; EODHD Terms of Service apply; redistribution of raw vendor data is prohibited",
+      "method": "GET",
+      "note": "403 Forbidden without an API token",
+      "outcome": "blocked_credential_or_terms",
+      "probe": "eodhd_eod_forbidden",
+      "retrieved_at": "2026-09-24T21:46:32Z",
+      "snippet_sha256": "78342a0905a72ce44da083dcb5d23b8ea0c16992ba2a82eece97e033d76ba3d3",
+      "source": "EODHD (eodhd.com)",
+      "status_text": "Forbidden"
+    },
+    {
+      "category": "commercial_reachability",
+      "credential_env": [],
+      "endpoint": "https://norgatedata.com/",
+      "evidence_file": "probe_commercial_reach.txt",
+      "evidence_sha256": "33d0ea90a2614c7641c950cbb5aa1a3a62087218d6863f09ef04188033f8b8a4",
+      "extracted_lines": [
+        "norgate=200"
+      ],
+      "http_status": 200,
+      "license_access_note": "vendor page reachable; data access requires a paid licence; redistribution is prohibited by the vendor licence",
+      "method": "GET",
+      "note": "200: vendor page reachable, licence required for data",
+      "outcome": "reachable",
+      "probe": "norgate_data_page",
+      "retrieved_at": "2026-09-24T21:46:32Z",
+      "snippet_sha256": "b828b6aca692005831c2952a5e9ab01c8fa28179ac2a477ea07a940de221d449",
+      "source": "Norgate Data",
+      "status_text": null
+    },
+    {
+      "category": "free_filings",
+      "credential_env": [],
+      "endpoint": "https://efts.sec.gov/LATEST/search-index?q={query}",
+      "evidence_file": "probe_commercial_reach.txt",
+      "evidence_sha256": "33d0ea90a2614c7641c950cbb5aa1a3a62087218d6863f09ef04188033f8b8a4",
+      "extracted_lines": [
+        "sec_ft=200"
+      ],
+      "http_status": 200,
+      "license_access_note": "US SEC public filings; free and public; SEC fair-access policy (declared User-Agent, request rate) applies",
+      "method": "GET",
+      "note": "200: available, but supplies filings/fundamentals, not delisted prices",
+      "outcome": "reachable",
+      "probe": "sec_edgar_full_text_search",
+      "retrieved_at": "2026-09-24T21:46:32Z",
+      "snippet_sha256": "383691a53ebec14068446dff15fb53b26d6f37e0bbb0fc2644c120eaadc32fd9",
+      "source": "SEC EDGAR full-text search",
+      "status_text": null
+    }
+  ]
+}

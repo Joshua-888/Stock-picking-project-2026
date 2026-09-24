@@ -125,7 +125,14 @@ class UniverseTable:
         return membership
 
     def members_asof(self, as_of, available_only=True):
-        """Security IDs whose membership window contains ``as_of``.
+        """Security IDs whose membership window covers ``as_of``.
+
+        Removal convention (shared with ``membership_engine.membership_at``): the
+        membership window is HALF-OPEN, ``membership_start <= as_of <
+        membership_end``. A removal with ``membership_end = E`` is therefore NOT a
+        member on or after ``E`` (the day before ``E`` still is), while an addition
+        with ``membership_start = S`` IS a member on or after ``S``. Both callers
+        must agree on this boundary.
 
         ``available_only`` additionally requires ``valid_from <= as_of`` so a
         membership revision that only becomes known later is not used early.
@@ -136,7 +143,7 @@ class UniverseTable:
         members = []
         for membership in self._memberships:
             start, end = _validate_window(membership.membership_start, membership.membership_end, "membership window")
-            if not (start <= moment and (end is None or moment <= end)):
+            if not (start <= moment and (end is None or moment < end)):
                 continue
             if available_only and membership.valid_from is not None:
                 valid_start, _valid_end = _validate_window(membership.valid_from, membership.valid_to, "validity window")
