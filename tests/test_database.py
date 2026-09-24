@@ -12,12 +12,17 @@ import pandas as pd
 # ── Schema and migrations ──────────────────────────────────────────────────────
 
 def test_all_tables_created(test_db):
-    """All 15 user tables should exist after initialize_db + apply_migrations."""
+    """All 16 user tables should exist after initialize_db + apply_migrations.
+
+    Migration v9 intentionally adds `watchlist_tickers` (used by
+    src/database/watchlist.py and src/ingestion/custom_ticker.py), so the user
+    table count is 16.
+    """
     from src.database.db import check_db_health
     health = check_db_health(test_db)
     user_tables = [t for t in health["tables"]
                    if t not in ("sqlite_sequence", "schema_migrations")]
-    assert len(user_tables) == 15, f"Expected 15 user tables, got {len(user_tables)}: {user_tables}"
+    assert len(user_tables) == 16, f"Expected 16 user tables, got {len(user_tables)}: {user_tables}"
 
 
 def test_migrations_idempotent(test_db):
