@@ -47,9 +47,19 @@ def _price_bytes(frame):
 
 
 def load_silver():
-    prices = layers.read_silver_table(BRONZE_ROOT, "wp2b_sp500_pit_prices_silver")
-    actions = layers.read_silver_table(BRONZE_ROOT, "wp2b_sp500_pit_actions_silver")
-    membership = layers.read_silver_table(BRONZE_ROOT, "wp2b_sp500_pit_membership_silver")
+    """Read the EXACT silver versions the build declared.
+
+    ``read_silver_table`` defaults to the lexicographically-largest version name,
+    which is not a valid 'newest' rule for content-addressed version ids and once
+    selected a stale empty actions table. Pinning to the declared build versions
+    removes that ambiguity
+    """
+    declared = json.loads((ARTIFACT_DIR / "layer_records.json").read_text())
+    prices = layers.read_silver_table(BRONZE_ROOT, "wp2b_sp500_pit_prices_silver", version=declared["silver_prices"])
+    actions = layers.read_silver_table(BRONZE_ROOT, "wp2b_sp500_pit_actions_silver", version=declared["silver_actions"])
+    membership = layers.read_silver_table(BRONZE_ROOT, "wp2b_sp500_pit_membership_silver", version=declared["silver_membership"])
+    print("LOAD_SILVER prices=%s actions=%s membership=%s" % (
+        declared["silver_prices"], declared["silver_actions"], declared["silver_membership"]))
     return prices, actions, membership
 
 
@@ -92,9 +102,25 @@ def build_pit_panel(windows, prices, actions):
                                        "adjusted_close_pit", "has_price"])
 
 
+def _is_possible_window(window):
+    """A window is impossible when its removal precedes (or equals) its start.
+
+    The listing guard can clamp an assumed start forward past an early removal;
+    such a window represents no tradable membership span and must be dropped
+    deterministically rather than silently repaired.
+    """
+    if not window.membership_end:
+        return True
+    start = str(window.membership_start)[:10]
+    end = str(window.membership_end)[:10]
+    return bool(start) and end > start
+
+
 def build_universe_table(windows):
     table = UniverseTable(universe_id=wp2b.UNIVERSE_ID)
     for window in windows:
+        if not _is_possible_window(window):
+            continue
         table.add(UniverseMembership(
             universe_id=wp2b.UNIVERSE_ID, security_id=window.security_id,
             ticker=window.security_id,
@@ -125,7 +151,10 @@ def survivorship_proof(windows, prices):
 
 def main():
     prices, actions, membership = load_silver()
-    windows = windows_from_frame(membership)
+    windows_all = windows_from_frame(membership)
+    windows = [window for window in windows_all if _is_possible_window(window)]
+    dropped_impossible = len(windows_all) - len(windows)
+    print("WINDOWS total=%d usable=%d dropped_impossible=%d" % (len(windows_all), len(windows), dropped_impossible))
     panel = build_pit_panel(windows, prices, actions)
     removed_ids = {window.security_id for window in windows if window.membership_end}
 
