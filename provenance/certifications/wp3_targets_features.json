@@ -1,0 +1,24 @@
+{
+  "certification_schema": "wp3_certification_v1",
+  "target_id": "target_set_888f68d1cfd0",
+  "target_version": "v2_wp3_targets_v1",
+  "feature_set_id": "feature_set_56361533cc1b",
+  "feature_set_fingerprint": "8b1525d344ef51884bd7577627c391adaa174aae1ceb71d7272f3bca851946b8",
+  "upstream_dataset": "dataset_dbaa77445b38",
+  "wp3_dataset": "dataset_afefe720f46d",
+  "wp3_dataset_fingerprint": "f244f86c22b2c2a4eae54df6e47f266bd330a12229405b73aaa691b76dc558c4",
+  "producing_code_commit": "285a9a7503ff5447f9f6680510f1c58099dcb9b2",
+  "rows": 121787,
+  "observable": 110855,
+  "censored": 10932,
+  "policy": "docs/research_v2/data_readiness_policy.md",
+  "certified_at": "2026-09-26T00:22:16+02:00",
+  "verdicts": {
+    "quant_auditor": {"audit_id": "AUDIT_WP3_R1_2026-09-26", "verdict": "WP3_AUDIT_PASS", "hard_defects": 0},
+    "research_ops_engineer": "REPRODUCIBLE"
+  },
+  "supersedes": ["feature_set_de242fe74a8b"],
+  "disabled_features_declared": ["market_regime", "term_spread", "x12_appreciation_proxy"],
+  "label_usage_rule": "only target_observable==true rows enter supervised labels; censored rows never treated as 0/negative and never used for models requiring a known 12m outcome",
+  "final_status": "WP3_COMPLETE"
+}
