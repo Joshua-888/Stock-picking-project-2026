@@ -37,6 +37,7 @@ This module performs no feature engineering, no model fitting and no scoring.
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import re
 import urllib.error
@@ -266,6 +267,35 @@ INFERRED_ANNOUNCEMENT = (
 # --------------------------------------------------------------------------- #
 
 
+def parse_eodhd_split_ratio(value):
+    """Parse EODHD split payload into ``(numerator, denominator)`` or ``(None, None)``.
+
+    EODHD returns splits as either a ratio STRING (``"7.000000/1.000000"``) or a
+    plain numeric factor. Either side missing/non-numeric yields ``(None, None)``
+    so an unparseable action is DROPPED rather than defaulting to a 1:1 split,
+    which would silently corrupt point-in-time price reconstruction.
+    """
+    if value in (None, ""):
+        return None, None
+    text = str(value).strip()
+    if "/" in text:
+        left, _, right = text.partition("/")
+        try:
+            numerator = float(left.strip())
+            denominator = float(right.strip())
+        except ValueError:
+            return None, None
+    else:
+        try:
+            numerator = float(text)
+        except ValueError:
+            return None, None
+        denominator = 1.0
+    if numerator == 0.0 or denominator == 0.0:
+        return None, None
+    return numerator, denominator
+
+
 @register_provider
 class EodhdProvider:
     """EODHD adapter (delisted prices, corporate actions, symbol identity).
@@ -333,13 +363,16 @@ class EodhdProvider:
             if isinstance(payload, dict) and payload.get("error"):
                 raise ProviderPayloadError("EODHD %s error: %s" % (kind, payload.get("error")))
             for entry in payload if isinstance(payload, list) else []:
+                numerator = denominator = None
+                if kind == SPLIT:
+                    numerator, denominator = parse_eodhd_split_ratio(entry.get("split"))
                 rows.append(
                     {
                         "ticker": ticker,
                         "kind": kind,
                         "effective_date": entry.get("date"),
-                        "numerator": entry.get("split") if kind == SPLIT else None,
-                        "denominator": 1.0 if kind == SPLIT else None,
+                        "numerator": numerator,
+                        "denominator": denominator,
                         "amount": entry.get("unadjustedValue", entry.get("value")) if kind == DIVIDEND else None,
                     }
                 )
@@ -537,23 +570,90 @@ def parse_html_tables(html):
     return tables
 
 
+# Wikipedia renders the S&P 500 change table with two date dialects in the SAME
+# page: ISO (``2002-07-19``) for older rows and long form (``September 21, 2026``)
+# for newer rows. Both are accepted and normalised to ISO; anything else is
+# skipped and counted (never guessed).
+_WIKI_ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_WIKI_MONTH_DAY_RE = re.compile(r"^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})$")
+_WIKI_DAY_MONTH_RE = re.compile(r"^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$")
+_MONTH_NUMBERS = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+}
+
+
+def normalize_wikipedia_date(value):
+    """Normalise a Wikipedia table date cell to ISO ``YYYY-MM-DD`` or ``None``.
+
+    Accepts the two dialects actually present in the page (ISO and
+    ``Month D, YYYY``) plus the ``D Month YYYY`` variant. A cell that cannot be
+    resolved deterministically returns ``None`` so the caller can SKIP and COUNT
+    it rather than fabricate a date.
+    """
+    text = " ".join(str(value or "").split())
+    if not text:
+        return None
+    iso = _WIKI_ISO_DATE_RE.match(text)
+    if iso:
+        year, month, day = (int(part) for part in iso.groups())
+    else:
+        long_form = _WIKI_MONTH_DAY_RE.match(text)
+        day_first = _WIKI_DAY_MONTH_RE.match(text)
+        if long_form:
+            month = _MONTH_NUMBERS.get(long_form.group(1).lower())
+            day, year = int(long_form.group(2)), int(long_form.group(3))
+        elif day_first:
+            month = _MONTH_NUMBERS.get(day_first.group(2).lower())
+            day, year = int(day_first.group(1)), int(day_first.group(3))
+        else:
+            return None
+        if month is None:
+            return None
+    try:
+        resolved = _dt.date(year, month, day)
+    except ValueError:
+        return None
+    return resolved.strftime("%Y-%m-%d")
+
+
 def parse_wikipedia_sp500_changes(html, universe_id="sp500"):
     """Extract add/remove change events from the Wikipedia component table.
 
     Expected columns: date, added ticker, added company, removed ticker,
     removed company, reason. A blank ticker cell means no event on that side.
+
+    Determinism / no-fabrication: a row whose date cannot be resolved to ISO is
+    SKIPPED and counted (see ``frame.attrs['diagnostics']``); no date is ever
+    invented. The output stays membership-only -- no prices are read here.
     """
     events = []
+    diagnostics = {
+        "rows_inspected": 0,
+        "rows_skipped_short": 0,
+        "rows_skipped_unparsed_date": 0,
+        "rows_skipped_no_ticker": 0,
+        "events_added": 0,
+        "events_removed": 0,
+    }
     for rows in parse_html_tables(html):
         for row in rows:
             if len(row) < 4:
+                diagnostics["rows_skipped_short"] += 1
                 continue
-            date = row[0]
-            if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+            diagnostics["rows_inspected"] += 1
+            date = normalize_wikipedia_date(row[0])
+            if date is None:
+                diagnostics["rows_skipped_unparsed_date"] += 1
                 continue
-            added = row[1].upper()
-            removed = row[3].upper() if len(row) > 3 else ""
-            if _TICKER_RE.match(added):
+            added = row[1].strip().upper()
+            removed = row[3].strip().upper() if len(row) > 3 else ""
+            added_is_ticker = bool(_TICKER_RE.match(added))
+            removed_is_ticker = bool(_TICKER_RE.match(removed))
+            if not added_is_ticker and not removed_is_ticker:
+                diagnostics["rows_skipped_no_ticker"] += 1
+                continue
+            if added_is_ticker:
                 events.append(
                     {
                         "security_id": added,
@@ -565,7 +665,8 @@ def parse_wikipedia_sp500_changes(html, universe_id="sp500"):
                         "source_reference": WIKIPEDIA_SP500_URL,
                     }
                 )
-            if _TICKER_RE.match(removed):
+                diagnostics["events_added"] += 1
+            if removed_is_ticker:
                 events.append(
                     {
                         "security_id": removed,
@@ -577,6 +678,7 @@ def parse_wikipedia_sp500_changes(html, universe_id="sp500"):
                         "source_reference": WIKIPEDIA_SP500_URL,
                     }
                 )
+                diagnostics["events_removed"] += 1
     if not events:
         raise WikipediaTableError("no membership change rows found in Wikipedia page")
     frame = _membership_frame(events, universe_id, "wikipedia:historical_components_sp500")
@@ -584,6 +686,7 @@ def parse_wikipedia_sp500_changes(html, universe_id="sp500"):
         "membership-only source: no prices, no permanent identifiers, no "
         "announcement dates, partial early history"
     )
+    frame.attrs["diagnostics"] = dict(diagnostics)
     return frame
 
 
@@ -633,6 +736,7 @@ __all__ = [
     "http_get",
     "normalize_delisted_prices",
     "normalize_corporate_actions",
+    "parse_eodhd_split_ratio",
     "normalize_identities",
     "events_from_daily_members",
     "parse_html_tables",
