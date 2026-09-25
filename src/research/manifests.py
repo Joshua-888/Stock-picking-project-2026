@@ -98,6 +98,13 @@ class DatasetManifest(_Manifest):
     synthetic_data_status: str
     known_limitations: list
     notes: str = ""
+    # WP2C Phase E: explicit source/security-master/universe versions and the
+    # censoring statistics of the label space. All optional (defaulted) so older
+    # manifests remain valid; populated by the WP2B/WP2C build finalizer.
+    source_versions: dict = None
+    security_master_version: str = None
+    universe_version: str = None
+    censoring_statistics: dict = None
 
     REQUIRED = (
         "dataset_id", "created_at", "git_commit", "branch", "sources", "universe_definition",
@@ -126,6 +133,10 @@ class DatasetManifest(_Manifest):
             for source, digest in sorted(self.source_fingerprints.items()):
                 if not is_sha256(digest):
                     problems.append("source_fingerprints[%r] must be a lower-case hex SHA-256 digest" % source)
+        for name in ("source_versions", "censoring_statistics"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, dict):
+                problems.append("field %r must be a mapping when supplied" % name)
         return problems
 
 

@@ -74,6 +74,77 @@ UNKNOWN_TERMINAL_RETURN_STATES = (
     TERMINAL_RETURN_ENDS_AT_REMOVAL, TERMINAL_RETURN_ENDS_BEFORE, TERMINAL_RETURN_MISSING,
 )
 
+# Target observability / censoring (WP2C Phase B). A 12-month forward label needs a
+# FUTURE price 12 months after T. When a security disappears before that horizon and
+# no terminal value exists, the label cannot be measured: the observation is kept
+# but CENSORED and flagged so it never enters supervised training as if observed.
+CENSOR_REASON_NEAR_WINDOW_END = "horizon_exceeds_research_window_end"
+CENSOR_REASON_NO_TERMINAL = "terminal_price_unobservable_series_ends"
+CENSOR_REASON_NO_PRICE = "no_price_for_security"
+TARGET_HORIZON_DAYS = 365
+
+# Canonical gold panel schema (single source of truth for build + finalize).
+PANEL_COLUMNS = (
+    "security_id", "ticker", "symbol", "snapshot_date", "membership_start", "membership_end",
+    "research_eligible", "available_at", "price_date", "raw_close", "adjusted_close_pit", "has_price",
+    "target_observable", "target_censored", "target_censor_reason", "terminal_price_observable",
+    "terminal_status", "membership_exit_observed",
+)
+
+
+def horizon_end(snapshot_date, horizon_days=TARGET_HORIZON_DAYS):
+    """Calendar date ``horizon_days`` after ``snapshot_date`` (ISO), or None."""
+    stamp = to_utc_timestamp(snapshot_date)
+    if stamp is None:
+        return None
+    return (stamp + pd.Timedelta(days=int(horizon_days))).strftime("%Y-%m-%d")
+
+
+def classify_target_observability(window, raw_frame, snapshot_date, window_end,
+                                 horizon_days=TARGET_HORIZON_DAYS, tolerance_days=10):
+    """Whether a 12-month forward outcome from ``snapshot_date`` is measurable.
+
+    Returns ``(observable, censored, reason)``. NEVER manufactures a terminal
+    return: a security whose series stops before the required horizon (and before
+    the research window end) is CENSORED with an explicit reason, so it can be
+    excluded from supervised labels rather than silently mislabelled.
+    """
+    if raw_frame is None or raw_frame.empty:
+        return False, True, CENSOR_REASON_NO_PRICE
+    needed = horizon_end(snapshot_date, horizon_days)
+    if needed is None:
+        return False, True, CENSOR_REASON_NO_TERMINAL
+    if needed > window_end:
+        # The horizon itself extends past the declared research window: the
+        # outcome is not yet observable for ANY security (uniform, expected).
+        return False, True, CENSOR_REASON_NEAR_WINDOW_END
+    last = max(str(day) for day in raw_frame["trade_date"].tolist())
+    if last >= _shift_day(needed, -tolerance_days):
+        return True, False, None
+    return False, True, CENSOR_REASON_NO_TERMINAL
+
+
+def classify_terminal_status(window, raw_frame, window_end, tolerance_days=10):
+    """Coarse terminal kind where determinable from PRICES only (no delisting meta).
+
+    EODHD publishes no delisting reason, so this is deliberately structural:
+    ``still_trading`` (series reaches the window end), ``series_ends_at_removal``,
+    ``series_ends_before_removal`` or ``no_price``. Nothing is inferred about WHY
+    a name left the index beyond what the price series shows.
+    """
+    if raw_frame is None or raw_frame.empty:
+        return "no_price"
+    last = max(str(day) for day in raw_frame["trade_date"].tolist())
+    if last >= _shift_day(window_end, -tolerance_days):
+        return "still_trading"
+    if window.membership_end is None:
+        return "series_ends_before_window_end"
+    if last >= _shift_day(window.membership_end, tolerance_days):
+        return "series_trades_past_removal"
+    if last >= _shift_day(window.membership_end, -tolerance_days):
+        return "series_ends_at_removal"
+    return "series_ends_before_removal"
+
 _NAME_STOPWORDS = frozenset({
     "inc", "incorporated", "corp", "corporation", "co", "company", "cos",
     "companies", "ltd", "limited", "plc", "llc", "holdings", "holding",
@@ -114,13 +185,35 @@ def build_symbol_index(symbol_rows):
     return index
 
 
+def symbol_code_variants(ticker):
+    """Equivalent vendor spellings of one ticker.
+
+    Wikipedia writes share classes with a dot (``BF.B``, ``BRK.B``) while EODHD
+    writes them with a dash (``BF-B``, ``BRK-B``). Both spellings are candidate
+    bases so a class share is never silently dropped (WP2C-A1).
+    """
+    text = str(ticker or "").strip().upper()
+    if not text:
+        return []
+    variants = {text, text.replace(".", "-"), text.replace("-", ".")}
+    return sorted(variant for variant in variants if variant)
+
+
+def is_old_symbol(code, ticker):
+    """True when ``code`` is an ``_OLD``/``_OLDn`` variant of ``ticker``."""
+    for base in symbol_code_variants(ticker):
+        if re.match(r"^%s_OLD\d*$" % re.escape(base), str(code), re.IGNORECASE):
+            return True
+    return False
+
+
 def symbol_candidates(ticker, index):
     """Every symbol that could denote ``ticker``: the bare code plus ``_old`` variants."""
-    ticker = str(ticker or "").strip().upper()
-    if not ticker:
-        return []
-    pattern = re.compile(r"^%s(?:_OLD\d*)?$" % re.escape(ticker), re.IGNORECASE)
-    return sorted(code for code in index if pattern.match(code))
+    codes = set()
+    for base in symbol_code_variants(ticker):
+        pattern = re.compile(r"^%s(?:_OLD\d*)?$" % re.escape(base), re.IGNORECASE)
+        codes.update(code for code in index if pattern.match(code))
+    return sorted(codes)
 
 
 def resolve_eodhd_symbol(ticker, name_hint, index, probe=None):
@@ -157,6 +250,84 @@ def resolve_eodhd_symbol(ticker, name_hint, index, probe=None):
     return None
 
 
+def _best_by_name(codes, name_hint, index):
+    """Return the single best name-matching code, or None on a tie/no evidence."""
+    hint = normalize_name(name_hint)
+    if not hint:
+        return None
+    scored = [(code, name_similarity(hint, normalize_name(index[code].get("name")))) for code in codes]
+    best = max(score for _, score in scored)
+    if best < 0.55:
+        return None
+    top = [code for code, score in scored if abs(score - best) < 1e-9]
+    return top[0] if len(top) == 1 else None
+
+
+def choose_window_symbol(ticker, window, index, name_hint=None, active_codes=None, probe=None):
+    """Resolve the EODHD provider symbol FOR ONE MEMBERSHIP WINDOW (WP2C-A2).
+
+    Ticker reuse means the bare ticker and its ``_OLD`` variants are DIFFERENT
+    companies (``DELL`` vs ``DELL_OLD``; ``WB`` vs ``WB_OLD2``). Resolution is
+    therefore per-window, never per-ticker, and never guessed:
+
+    * an ONGOING (current/active) constituent prefers its EXACT active ticker;
+    * a HISTORICAL window uses price-coverage evidence: a candidate must have a
+      first price at or before the window start (a series that only begins after
+      the window is the REUSED company and is rejected), then name evidence;
+    * an ambiguous case with no discriminating evidence returns ``None``.
+
+    ``probe(code, start, end)`` returns the first available trade date for
+    ``code`` across the window span (or ``None``); it is injected so the logic is
+    live-independent in tests.
+    """
+    candidates = symbol_candidates(ticker, index)
+    if not candidates:
+        return None
+    active = {str(code).upper() for code in (active_codes or ())}
+    exact = [code for code in candidates if not is_old_symbol(code, ticker)]
+    active_exact = [code for code in exact if code.upper() in active]
+    ongoing = window is None or window.membership_end is None
+    if ongoing:
+        if active_exact:
+            return {"code": active_exact[0], "method": "active_current", "confidence": 1.0,
+                    "candidates": list(candidates)}
+        if len(candidates) == 1:
+            return {"code": candidates[0], "method": "only_candidate", "confidence": 1.0,
+                    "candidates": list(candidates)}
+    start = window.membership_start if window is not None else RESEARCH_WINDOW_START
+    end = (window.membership_end if window is not None and window.membership_end else RESEARCH_WINDOW_END)
+    if probe is not None:
+        cover = {}
+        for code in candidates:
+            try:
+                cover[code] = probe(code, start, end)
+            except Exception:
+                cover[code] = None
+        window_start_plus = _shift_day(start, 10)
+        viable = [code for code in candidates
+                  if cover.get(code) is not None and str(cover[code])[:10] <= window_start_plus]
+        if len(viable) == 1:
+            return {"code": viable[0], "method": "price_coverage", "confidence": 1.0,
+                    "candidates": list(candidates)}
+        if len(viable) > 1:
+            chosen = _best_by_name(viable, name_hint, index)
+            if chosen is not None:
+                return {"code": chosen, "method": "price_coverage_name", "confidence": 1.0,
+                        "candidates": list(candidates)}
+            return None
+        # no candidate covers the window start: fall through to name evidence
+    if len(candidates) == 1:
+        return {"code": candidates[0], "method": "only_candidate", "confidence": 1.0,
+                "candidates": list(candidates)}
+    chosen = _best_by_name(candidates, name_hint, index)
+    if chosen is not None:
+        hint = normalize_name(name_hint)
+        confidence = name_similarity(hint, normalize_name(index[chosen].get("name")))
+        return {"code": chosen, "method": "name", "confidence": round(confidence, 4),
+                "candidates": list(candidates)}
+    return None
+
+
 @dataclass
 class MembershipWindow:
     """One security's reconstructed S&P 500 membership window (half-open)."""
@@ -173,6 +344,17 @@ class MembershipWindow:
     # silently back-projected into an earlier period (WP2B-F3).
     research_eligible: bool = True
     unverifiable_before: bool = False
+    # symbol is the RESOLVED EODHD provider code for this window (WP2C-A2). The
+    # security_id stays the Wikipedia ticker (the universe identity); a reused
+    # ticker can need a DIFFERENT provider symbol per window (DELL -> DELL /
+    # DELL_OLD; WB -> WB / WB_OLD2), so resolution is per-window, never guessed.
+    symbol: str = None
+    # resolution_method / unresolved_reason make the resolver's decision explicit
+    # (A1): every membership window ends RESOLVED or EXPLICITLY_UNRESOLVED_WITH_REASON.
+    resolution_method: str = None
+    unresolved_reason: str = None
+    # structural terminal kind derived from PRICES only (no delisting metadata).
+    terminal_status: str = None
 
     def overlaps(self, start, end):
         window_start = to_utc_timestamp(self.membership_start)
@@ -226,9 +408,21 @@ def first_price_by_security(price_frame):
     return first
 
 
-def apply_listing_guard(windows, first_prices):
-    """Apply the listing guard to every window using per-security first price dates."""
-    return [_apply_listing_guard(window, (first_prices or {}).get(window.security_id)) for window in windows]
+def apply_listing_guard(windows, first_prices, first_price_by_symbol=None):
+    """Apply the listing guard to every window using per-security first price dates.
+
+    When ``first_price_by_symbol`` is supplied AND a window has a resolved
+    ``symbol``, that provider symbol's first price is preferred: for a reused
+    ticker the per-security proxy aggregates two different companies and could
+    mask a wrong-company series (WP2C-A2), so the symbol series wins when known.
+    """
+    def _listing(window):
+        if getattr(window, "symbol", None) and first_price_by_symbol:
+            value = (first_price_by_symbol or {}).get(str(window.symbol).upper())
+            if value:
+                return value
+        return (first_prices or {}).get(window.security_id)
+    return [_apply_listing_guard(window, _listing(window)) for window in windows]
 
 
 def reconstruct_memberships(change_frame, current_constituents, window_start, window_end,
@@ -253,25 +447,39 @@ def reconstruct_memberships(change_frame, current_constituents, window_start, wi
         stamp = to_utc_timestamp(value)
         if stamp is not None:
             listing[str(key).strip().upper()] = stamp.strftime("%Y-%m-%d")
+    window_start_ts = to_utc_timestamp(window_start)
     windows = []
     assumed_starts = []
     for security, events in by_security.items():
-        events.sort(key=lambda item: (item[0], item[1]))
+        # On a shared effective date a REMOVE must be processed before an ADD: the
+        # source reuses a ticker across an index event (FOX 2019-03-19: old
+        # 21st Century Fox removed, new Fox Corp added). Sorting remove-first lets
+        # the remove close the prior window and the add reopen an ongoing one, so a
+        # current constituent is never left with no membership window (WP2C-A3).
+        events.sort(key=lambda item: (item[0], 0 if item[1] == "remove" else 1))
         opened = None
         opened_known = True
         for effective, action in events:
+            effective_ts = to_utc_timestamp(effective)
             if action == "add":
                 if opened is None:
                     opened = effective
                     opened_known = True
             elif action == "remove":
                 if opened is None:
-                    opened = window_start
-                    opened_known = False
+                    # A removal with no known add is either (a) OUT OF WINDOW
+                    # (effective at/before the research start), which must NOT
+                    # remove a valid current constituent (WP2C-A3: e.g. T removed
+                    # 2005-11-18, MCK 1994-09-30), or (b) an assumed pre-source
+                    # membership that was live at the window start (flagged).
+                    if effective_ts is not None and window_start_ts is not None and effective_ts <= window_start_ts:
+                        continue
                     assumed_starts.append({"security_id": security, "removal": effective})
-                windows.append(MembershipWindow(security, security, opened, effective, opened_known))
-                opened = None
-                opened_known = True
+                    windows.append(MembershipWindow(security, security, window_start, effective, False))
+                else:
+                    windows.append(MembershipWindow(security, security, opened, effective, opened_known))
+                    opened = None
+                    opened_known = True
         if opened is not None:
             windows.append(MembershipWindow(security, security, opened, None, opened_known))
     covered = {window.security_id for window in windows}
@@ -408,7 +616,7 @@ def panel_asof(month_ends, asof=None):
     return max(days) if days else None
 
 
-def monthly_panel_for_security(window, raw_frame, actions, month_ends, asof=None):
+def monthly_panel_for_security(window, raw_frame, actions, month_ends, asof=None, window_end=None):
     """PIT monthly rows for one security over the month-ends it was a member.
 
     ``adjusted_close_pit`` is a RETURN-CONTINUOUS series: each raw close is
@@ -439,11 +647,17 @@ def monthly_panel_for_security(window, raw_frame, actions, month_ends, asof=None
             continue
         position = bisect.bisect_right(dates, str(month)[:10]) - 1
         if position < 0:
+            observable, censored, reason = classify_target_observability(
+                window, raw_frame, month, window_end or RESEARCH_WINDOW_END)
             rows.append({"security_id": window.security_id, "ticker": window.ticker,
-                         "snapshot_date": month, "membership_start": window.membership_start,
+                         "symbol": window.symbol, "snapshot_date": month, "membership_start": window.membership_start,
                          "membership_end": window.membership_end, "research_eligible": window.research_eligible,
                          "available_at": None, "price_date": None, "raw_close": None,
-                         "adjusted_close_pit": None, "has_price": False})
+                         "adjusted_close_pit": None, "has_price": False,
+                         "target_observable": bool(observable), "target_censored": bool(censored),
+                         "target_censor_reason": reason, "terminal_price_observable": False,
+                         "terminal_status": window.terminal_status if hasattr(window, "terminal_status") else None,
+                         "membership_exit_observed": bool(window.membership_end is not None)})
             continue
         price_date = dates[position]
         raw_close = closes[position]
@@ -454,11 +668,17 @@ def monthly_panel_for_security(window, raw_frame, actions, month_ends, asof=None
             factor = numerator / denominator if denominator else 1.0
         available = price_available_at(price_date)
         available_at = None if available is None else available.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+        observable, censored, reason = classify_target_observability(
+            window, raw_frame, month, window_end or RESEARCH_WINDOW_END)
         rows.append({"security_id": window.security_id, "ticker": window.ticker,
-                     "snapshot_date": month, "membership_start": window.membership_start,
+                     "symbol": window.symbol, "snapshot_date": month, "membership_start": window.membership_start,
                      "membership_end": window.membership_end, "research_eligible": window.research_eligible,
                      "available_at": available_at, "price_date": price_date, "raw_close": raw_close,
-                     "adjusted_close_pit": raw_close * factor, "has_price": True})
+                     "adjusted_close_pit": raw_close * factor, "has_price": True,
+                     "target_observable": bool(observable), "target_censored": bool(censored),
+                     "target_censor_reason": reason, "terminal_price_observable": bool(observable),
+                     "terminal_status": window.terminal_status if hasattr(window, "terminal_status") else None,
+                     "membership_exit_observed": bool(window.membership_end is not None)})
     return rows
 
 

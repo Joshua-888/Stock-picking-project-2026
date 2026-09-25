@@ -88,6 +88,10 @@ def build_gold_manifest(
     root=None,
     notes="",
     config=None,
+    source_versions=None,
+    security_master_version=None,
+    universe_version=None,
+    censoring_statistics=None,
 ):
     """Build (and validate) a ``DatasetManifest`` for one GOLD dataset.
 
@@ -138,6 +142,10 @@ def build_gold_manifest(
         synthetic_data_status=synthetic_status,
         known_limitations=list(known_limitations),
         notes=notes,
+        source_versions=dict(source_versions) if source_versions else None,
+        security_master_version=security_master_version,
+        universe_version=universe_version,
+        censoring_statistics=dict(censoring_statistics) if censoring_statistics else None,
     )
     manifest.validate()
     return manifest
@@ -172,6 +180,10 @@ def build_and_persist_gold(
     root=None,
     notes="",
     config=None,
+    source_versions=None,
+    security_master_version=None,
+    universe_version=None,
+    censoring_statistics=None,
 ):
     """Convenience wrapper: fingerprint, manifest, persist one GOLD dataset.
 
@@ -203,6 +215,10 @@ def build_and_persist_gold(
         root=root,
         notes=notes,
         config=config,
+        source_versions=source_versions,
+        security_master_version=security_master_version,
+        universe_version=universe_version,
+        censoring_statistics=censoring_statistics,
     )
     persisted = persist_manifest(manifest, root=root, name=name)
     persisted["table"] = table
