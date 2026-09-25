@@ -1,16 +1,26 @@
-"""WP2B live build: EODHD -> BRONZE -> SILVER -> identity -> universe -> GOLD.
+"""WP2B/WP2C live build: EODHD -> BRONZE -> SILVER -> per-window identity -> universe.
 
 Run (research mode, real data only):
 
-    /opt/venv/bin/python scripts/research_v2/wp2b_build_live_dataset.py [--limit N]
+    PYTHONPATH=. /opt/venv/bin/python scripts/research_v2/wp2b_build_live_dataset.py [--limit N]
 
 No synthetic fallback: if real data cannot be obtained the run fails loudly.
 This script records provenance; it performs no feature engineering and no scoring.
+
+WP2C changes:
+* identity is resolved PER MEMBERSHIP WINDOW (ticker reuse: DELL -> DELL_OLD then
+  DELL; WB -> WB_OLD2), never per-ticker and never guessed (A2);
+* out-of-window removals cannot delete a valid current constituent (A3);
+* EVERY current constituent must end RESOLVED or EXPLICITLY_UNRESOLVED_WITH_REASON
+  (A1 hard gate), never silently absent;
+* prices/actions are fetched and cached BY PROVIDER SYMBOL, so a reused ticker
+  can never read another company's cache.
 """
 
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import re
@@ -37,7 +47,7 @@ CORPORATE_ACTION_FIELDS = ("ticker", "kind", "effective_date", "numerator", "den
 SILVER_PRICES = "wp2b_sp500_pit_prices_silver"
 SILVER_ACTIONS = "wp2b_sp500_pit_actions_silver"
 SILVER_MEMBERSHIP = "wp2b_sp500_pit_membership_silver"
-GOLD_PANEL = "wp2b_sp500_pit_panel_gold"
+CACHE_DIR = Path("/tmp/wp2b_cache")
 
 
 def load_eodhd_token():
@@ -117,42 +127,12 @@ def build_name_hints(bronze_hist_record):
     return hints
 
 
-def resolve_identities(tickers, symbol_index, provider, name_hints):
-    resolved, unresolved = {}, []
-    for ticker in sorted(tickers):
-        candidates = wp2b.symbol_candidates(ticker, symbol_index)
-
-        def probe(code):
-            try:
-                frame = provider.fetch_delisted_prices("probe", code, wp2b.RESEARCH_WINDOW_START[:4] + "-01-01", wp2b.RESEARCH_WINDOW_START[:4] + "-12-31")
-                return not frame.empty
-            except Exception:
-                return False
-
-        try:
-            result = wp2b.resolve_eodhd_symbol(ticker, name_hints.get(ticker, ticker), symbol_index,
-                                               probe=probe if len(candidates) > 1 else None)
-        except Exception as exc:
-            print("RESOLVE_FAIL %s %s" % (ticker, redact(exc)))
-            result = None
-        if result is None:
-            unresolved.append({"ticker": ticker, "candidates": candidates, "name_hint": name_hints.get(ticker)})
-        else:
-            result["name_hint"] = name_hints.get(ticker)
-            resolved[ticker] = result
-    return resolved, unresolved
-
-
-CACHE_DIR = Path("/tmp/wp2b_cache")
+def _cache_key(value):
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", str(value))
 
 
 def _cache_frame(key, role, frame):
-    """Persist a fetched frame so an interrupted run does not refetch it.
-
-    The cache is keyed by the RESOLVED provider symbol, never the Wikipedia
-    ticker: a reused ticker (WB -> WB_OLD2) must never read another company's
-    cached prices.
-    """
+    """Persist a fetched frame keyed by the RESOLVED provider symbol."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = CACHE_DIR / ("%s.%s.parquet" % (_cache_key(key), role))
     try:
@@ -161,11 +141,7 @@ def _cache_frame(key, role, frame):
         pass
 
 
-def _cache_key(value):
-    return re.sub(r"[^A-Za-z0-9_.-]", "_", str(value))
-
-
-def _load_cached(key, role, columns):
+def _load_cached(key, role, columns=None):
     path = CACHE_DIR / ("%s.%s.parquet" % (_cache_key(key), role))
     if path.exists():
         try:
@@ -175,16 +151,87 @@ def _load_cached(key, role, columns):
     return None
 
 
-def _fetch_one(provider, ticker, symbol, no_actions):
+def _probe_first_date(provider, code, first_cache, price_cache):
+    """First available trade date for one provider symbol over the full window."""
+    code = str(code).upper()
+    if code in first_cache:
+        return first_cache[code]
+    frame = price_cache.get(code)
+    if frame is None:
+        frame = _load_cached(code, "prices", ad.DELISTED_PRICE_FIELDS)
+    if frame is None:
+        try:
+            frame = provider.fetch_delisted_prices("probe", code, wp2b.RESEARCH_WINDOW_START, wp2b.RESEARCH_WINDOW_END)
+            _cache_frame(code, "prices", frame)
+        except Exception as exc:
+            print("PROBE_FAIL %s %s" % (code, redact(exc)))
+            frame = pd.DataFrame(columns=list(ad.DELISTED_PRICE_FIELDS))
+    price_cache[code] = frame
+    days = [str(day) for day in frame["trade_date"].tolist()] if len(frame) else []
+    first = min(days) if days else None
+    first_cache[code] = first
+    return first
+
+
+def _unresolved_reason(security_id, symbol_index):
+    candidates = wp2b.symbol_candidates(security_id, symbol_index)
+    if not candidates:
+        return "no_symbol_candidates_in_vendor"
+    return "ambiguous_no_discriminating_evidence"
+
+
+def resolve_windows(windows, symbol_index, provider, name_hints, active_codes, price_cache=None):
+    """Resolve ONE EODHD provider symbol PER MEMBERSHIP WINDOW (WP2C-A2).
+
+    Returns ``(resolutions, price_cache)`` where each resolution records the
+    chosen symbol, the method and -- when unresolved -- an explicit reason, so no
+    window is ever silently absent.
+    """
+    first_cache = {}
+    price_cache = price_cache if price_cache is not None else {}
+    resolutions = []
+    for window in windows:
+        candidates = wp2b.symbol_candidates(window.security_id, symbol_index)
+
+        def probe(code, start, end, _provider=provider):
+            return _probe_first_date(_provider, code, first_cache, price_cache)
+
+        try:
+            result = wp2b.choose_window_symbol(
+                window.security_id, window, symbol_index,
+                name_hint=name_hints.get(window.security_id), active_codes=active_codes,
+                probe=probe if len(candidates) > 1 else None)
+        except Exception as exc:
+            print("RESOLVE_FAIL %s %s" % (window.security_id, redact(exc)))
+            result = None
+        if result is None:
+            resolutions.append({
+                "security_id": window.security_id, "membership_start": window.membership_start,
+                "membership_end": window.membership_end, "symbol": None, "resolved": False,
+                "method": None, "reason": _unresolved_reason(window.security_id, symbol_index),
+                "candidates": candidates, "name_hint": name_hints.get(window.security_id),
+            })
+        else:
+            resolutions.append({
+                "security_id": window.security_id, "membership_start": window.membership_start,
+                "membership_end": window.membership_end, "symbol": result["code"], "resolved": True,
+                "method": result["method"], "reason": None, "candidates": candidates,
+                "name_hint": name_hints.get(window.security_id),
+            })
+    return resolutions, price_cache
+
+
+def _fetch_one(provider, symbol, no_actions):
+    """Fetch prices + corporate actions for ONE provider symbol (cache-keyed)."""
     failed = []
     prices = _load_cached(symbol, "prices", ad.DELISTED_PRICE_FIELDS)
     if prices is None:
         try:
-            prices = provider.fetch_delisted_prices(ticker, symbol, wp2b.RESEARCH_WINDOW_START, wp2b.RESEARCH_WINDOW_END)
+            prices = provider.fetch_delisted_prices(symbol, symbol, wp2b.RESEARCH_WINDOW_START, wp2b.RESEARCH_WINDOW_END)
             _cache_frame(symbol, "prices", prices)
         except Exception as exc:
             prices = pd.DataFrame(columns=list(ad.DELISTED_PRICE_FIELDS))
-            failed.append({"ticker": ticker, "kind": "price", "error": redact(exc)})
+            failed.append({"symbol": symbol, "kind": "price", "error": redact(exc)})
     actions = pd.DataFrame(columns=list(CORPORATE_ACTION_FIELDS))
     if not no_actions:
         actions = _load_cached(symbol, "actions", CORPORATE_ACTION_FIELDS)
@@ -194,100 +241,58 @@ def _fetch_one(provider, ticker, symbol, no_actions):
                 _cache_frame(symbol, "actions", actions)
             except Exception as exc:
                 actions = pd.DataFrame(columns=list(CORPORATE_ACTION_FIELDS))
-                failed.append({"ticker": ticker, "kind": "action", "error": redact(exc)})
-    return ticker, prices, actions, failed
+                failed.append({"symbol": symbol, "kind": "action", "error": redact(exc)})
+    return symbol, prices, actions, failed
 
 
-def fetch_all(provider, resolved, no_actions, workers=8):
-    price_cache, action_cache, failures = {}, {}, []
+def fetch_all(provider, symbols, no_actions, workers=8, price_cache=None):
+    price_cache = price_cache if price_cache is not None else {}
+    action_cache, failures = {}, []
     started = time.time()
+    todo = [symbol for symbol in sorted(symbols) if symbol not in price_cache]
     done = 0
-    tickers = sorted(resolved)
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_fetch_one, provider, ticker, resolved[ticker]["code"], no_actions): ticker
-                   for ticker in tickers}
+        futures = {pool.submit(_fetch_one, provider, symbol, no_actions): symbol for symbol in todo}
         for future in as_completed(futures):
-            ticker, prices, actions, failed = future.result()
-            price_cache[ticker] = prices
-            action_cache[ticker] = actions
+            symbol, prices, actions, failed = future.result()
+            price_cache[symbol] = prices
+            action_cache[symbol] = actions
             failures.extend(failed)
             done += 1
             if done % 50 == 0:
-                print("FETCHED %d/%d elapsed=%.0fs" % (done, len(tickers), time.time() - started))
+                print("FETCHED %d/%d elapsed=%.0fs" % (done, len(todo), time.time() - started))
+    for symbol in price_cache:
+        action_cache.setdefault(symbol, pd.DataFrame(columns=list(CORPORATE_ACTION_FIELDS)))
     return price_cache, action_cache, failures
 
 
-month_ends = wp2b.month_ends  # canonical helper lives in the wp2b module
-
-
-def build_silver_and_gold(windows, price_cache, action_cache, window_start, window_end):
-    by_security = {}
+def _price_frame_by_security(windows, price_cache):
+    """Map security_id -> raw price frame using each window's RESOLVED symbol."""
+    out = {}
     for window in windows:
-        by_security.setdefault(window.security_id, []).append(window)
-
-    price_rows, action_rows, panel_rows, coverage = [], [], [], []
-    months = month_ends(window_start, window_end)
-    for security in sorted(by_security):
-        raw_frame = price_cache.get(security)
-        action_frame = action_cache.get(security)
-        actions = wp2b.actions_from_eodhd_rows(
-            action_frame.to_dict("records") if action_frame is not None else [], security)
-        for row in (raw_frame.to_dict("records") if raw_frame is not None else []):
-            price_rows.append({"security_id": security, "ticker": row.get("ticker"),
-                               "trade_date": str(row.get("trade_date"))[:10], "raw_close": row.get("raw_close")})
-        for action in actions:
-            action_rows.append({"security_id": security, "ticker": security, "kind": action.kind,
-                                "effective_date": action.effective_date, "numerator": action.numerator,
-                                "denominator": action.denominator, "amount": action.amount})
-        terminal = wp2b.TERMINAL_NO_PRICE
-        terminal_return = wp2b.TERMINAL_RETURN_MISSING
-        completeness = wp2b.PRICE_MISSING
-        # F2: a series that begins ENTIRELY after a removal is the WRONG (reused)
-        # company; quarantine the id instead of pairing it with another firm.
-        quarantined = any(wp2b.series_ends_after_membership(window, raw_frame) for window in by_security[security])
-        for window in sorted(by_security[security], key=lambda item: item.membership_start):
-            panel_rows.extend(wp2b.monthly_panel_for_security(window, raw_frame, actions, months))
-            completeness = wp2b.classify_price_completeness(window, raw_frame, window_start, window_end)
-            terminal = wp2b.classify_terminal(window, raw_frame, window_end)
-            terminal_return = wp2b.classify_terminal_return(window, raw_frame, window_end)
-        if quarantined:
-            completeness = wp2b.PRICE_IDENTITY_UNRESOLVED
-        # Removal year (delisting epoch) for the by-year completeness report; a
-        # still-listed security is reported as 'ongoing'.
-        _ends = [str(w.membership_end)[:4] for w in by_security[security] if w.membership_end]
-        removal_year = max(_ends) if _ends else "ongoing"
-        coverage.append({"security_id": security, "price_completeness": completeness,
-                         "terminal_behavior": terminal, "terminal_return_status": terminal_return,
-                         "quarantined_wrong_company": bool(quarantined), "removal_year": removal_year,
-                         "price_rows": int(len(raw_frame) if raw_frame is not None else 0),
-                         "action_rows": len(actions)})
-    prices_df = pd.DataFrame(price_rows, columns=["security_id", "ticker", "trade_date", "raw_close"])
-    actions_df = pd.DataFrame(action_rows, columns=["security_id", "ticker", "kind", "effective_date", "numerator", "denominator", "amount"])
-    panel_df = pd.DataFrame(panel_rows, columns=["security_id", "ticker", "snapshot_date", "membership_start",
-                                                 "membership_end", "research_eligible", "available_at", "price_date", "raw_close",
-                                                 "adjusted_close_pit", "has_price"])
-    coverage_df = pd.DataFrame(coverage)
-    return prices_df, actions_df, panel_df, coverage_df
+        symbol = window.symbol
+        if not symbol or symbol not in price_cache:
+            continue
+        out.setdefault(window.security_id, price_cache[symbol])
+    return out
 
 
-def _price_frame_for_guard(price_cache):
-    """Flatten the per-symbol price cache into one security_id-keyed frame."""
-    rows = []
-    for security, frame in (price_cache or {}).items():
+def _first_price_by_symbol(price_cache):
+    first = {}
+    for symbol, frame in (price_cache or {}).items():
         if frame is None or len(frame) == 0:
             continue
-        for record in frame.to_dict("records"):
-            rows.append({"security_id": security, "trade_date": str(record.get("trade_date"))[:10],
-                         "raw_close": record.get("raw_close")})
-    return pd.DataFrame(rows, columns=["security_id", "trade_date", "raw_close"])
+        days = [str(day) for day in frame["trade_date"].tolist()]
+        if days:
+            first[str(symbol).upper()] = min(days)
+    return first
 
 
-def coverage_summary(coverage_df, unresolved, removed_ids):
+def coverage_summary(coverage_df, unresolved_windows, removed_ids, securities):
     total = len(coverage_df)
     counts = Counter(coverage_df["price_completeness"].tolist()) if total else Counter()
     removed_counts = Counter(coverage_df.loc[coverage_df["security_id"].isin(removed_ids), "price_completeness"].tolist()) if total else Counter()
-    by_year = {}
-    by_delisting_type = {}
+    by_year, by_delisting_type = {}, {}
     if total:
         for _, row in coverage_df.iterrows():
             year = str(row.get("removal_year") or "ongoing")
@@ -299,10 +304,7 @@ def coverage_summary(coverage_df, unresolved, removed_ids):
     resolved_complete = counts.get(wp2b.PRICE_COMPLETE, 0)
     percent = round(100.0 * resolved_complete / total, 2) if total else 0.0
     removed_percent = round(100.0 * removed_counts.get(wp2b.PRICE_COMPLETE, 0) / max(1, sum(removed_counts.values())), 2)
-    # F5: terminal-return observability + F2 wrong-company quarantine.
-    terminal_unknown = 0
-    quarantined = 0
-    removed_unknown = 0
+    terminal_unknown = quarantined = removed_unknown = 0
     removed_uncertain_ids = []
     if total:
         for _, row in coverage_df.iterrows():
@@ -319,23 +321,60 @@ def coverage_summary(coverage_df, unresolved, removed_ids):
     return {
         "securities_total": total,
         "resolved": total,
-        "unresolved": len(unresolved),
+        "unresolved_windows": len(unresolved_windows),
+        "unresolved_securities": len({item["security_id"] for item in unresolved_windows}),
         "complete": counts.get(wp2b.PRICE_COMPLETE, 0),
         "partial_history": counts.get(wp2b.PRICE_PARTIAL, 0),
         "missing": counts.get(wp2b.PRICE_MISSING, 0),
         "terminal_return_uncertain": counts.get(wp2b.PRICE_TERMINAL_UNCERTAIN, 0),
-        "identity_unresolved": len(unresolved),
+        "identity_unresolved": counts.get(wp2b.PRICE_IDENTITY_UNRESOLVED, 0),
         "overall_complete_percent": percent,
         "removed_constituent_complete_percent": removed_percent,
         "removed_security_count": len(removed_ids),
         "terminal_return_unknown_count": terminal_unknown,
         "removed_without_usable_terminal_price": removed_unknown,
-        "removed_without_usable_terminal_price_ids": sorted(removed_uncertain_ids),
+        "removed_without_usable_terminal_price_ids": sorted(set(removed_uncertain_ids)),
         "wrong_company_quarantined": quarantined,
         "label_loss_percent": round(100.0 * removed_unknown / removed_total, 2),
+        "window_count": int(len(coverage_df)),
         "by_year": by_year,
         "by_delisting_type": by_delisting_type,
     }
+
+
+def build_coverage(windows, price_by_security, window_start, window_end):
+    """Per-window price completeness / terminal behaviour / wrong-company quarantine."""
+    rows = []
+    for window in windows:
+        raw_frame = price_by_security.get(window.security_id)
+        quarantined = wp2b.series_ends_after_membership(window, raw_frame)
+        completeness = wp2b.classify_price_completeness(window, raw_frame, window_start, window_end)
+        terminal = wp2b.classify_terminal(window, raw_frame, window_end)
+        terminal_return = wp2b.classify_terminal_return(window, raw_frame, window_end)
+        if quarantined:
+            completeness = wp2b.PRICE_IDENTITY_UNRESOLVED
+        rows.append({
+            "security_id": window.security_id, "symbol": window.symbol,
+            "price_completeness": completeness, "terminal_behavior": terminal,
+            "terminal_return_status": terminal_return,
+            "quarantined_wrong_company": bool(quarantined),
+            "removal_year": str(window.membership_end)[:4] if window.membership_end else "ongoing",
+            "price_rows": int(len(raw_frame) if raw_frame is not None else 0),
+            "resolution_method": window.resolution_method,
+            "resolution_reason": window.unresolved_reason,
+        })
+    return pd.DataFrame(rows)
+
+
+def _serialize_membership(windows):
+    return pd.DataFrame([{
+        "security_id": window.security_id, "ticker": window.ticker, "symbol": window.symbol,
+        "membership_start": window.membership_start, "membership_end": window.membership_end,
+        "start_known": window.start_known, "research_eligible": window.research_eligible,
+        "unverifiable_before": window.unverifiable_before,
+        "resolution_method": window.resolution_method, "unresolved_reason": window.unresolved_reason,
+        "source": "wikipedia:historical_components_sp500",
+    } for window in windows])
 
 
 def main(argv=None):
@@ -350,73 +389,128 @@ def main(argv=None):
 
     changes, constituents, delisted, active, bronze_hist, bronze_del, bronze_act = build_bronze(provider)
     symbol_index = wp2b.build_symbol_index(list(active) + list(delisted))
+    active_codes = {str(row.get("Code")).upper() for row in active}
     name_hints = build_name_hints(bronze_hist)
 
     windows, assumed = wp2b.reconstruct_memberships(changes, constituents,
                                                      wp2b.RESEARCH_WINDOW_START, wp2b.RESEARCH_WINDOW_END)
-    all_tickers = sorted({window.security_id for window in windows})
-    run_tickers = all_tickers[: args.limit] if args.limit else all_tickers
-    print("SEED_MEMBERSHIP windows=%d securities=%d assumed_starts=%d run=%d" % (
-        len(windows), len(all_tickers), len(assumed), len(run_tickers)))
+    print("SEED_MEMBERSHIP windows=%d securities=%d assumed_starts=%d" % (
+        len(windows), len({w.security_id for w in windows}), len(assumed)))
 
-    resolved, unresolved = resolve_identities(run_tickers, symbol_index, provider, name_hints)
-    print("RESOLVED %d  UNRESOLVED %d" % (len(resolved), len(unresolved)))
+    resolutions, price_cache = resolve_windows(windows, symbol_index, provider, name_hints, active_codes)
+    index_by_key = {(item["security_id"], item["membership_start"], item["membership_end"]): item
+                    for item in resolutions}
+    resolved_symbols = set()
+    for window in windows:
+        item = index_by_key.get((window.security_id, window.membership_start, window.membership_end))
+        if item and item["resolved"]:
+            window.symbol = item["symbol"]
+            window.resolution_method = item["method"]
+            resolved_symbols.add(item["symbol"])
+        elif item:
+            window.unresolved_reason = item["reason"]
+    print("RESOLVED windows=%d symbols=%d unresolved_windows=%d" % (
+        sum(1 for item in resolutions if item["resolved"]), len(resolved_symbols),
+        sum(1 for item in resolutions if not item["resolved"])))
 
-    price_cache, action_cache, failures = fetch_all(provider, resolved, args.no_actions)
-    price_rows = sum(len(frame) for frame in price_cache.values())
-    action_rows = sum(len(frame) for frame in action_cache.values())
-    print("PRICE rows=%d  ACTION rows=%d  failures=%d" % (price_rows, action_rows, len(failures)))
+    price_cache, action_cache, failures = fetch_all(provider, resolved_symbols, args.no_actions,
+                                                    price_cache=price_cache)
+    print("PRICE symbols=%d rows=%d ACTION rows=%d failures=%d" % (
+        len(price_cache), sum(len(f) for f in price_cache.values()),
+        sum(len(a) for a in action_cache.values()), len(failures)))
 
-    # F3: apply the listing guard NOW that first price dates are known. A window
-    # that opened before a security listed is clamped forward; an assumed
-    # (unverifiable) start is flagged research_eligible=False so it can be
-    # excluded from research cross-sections instead of back-projecting a
-    # present-day constituent into the past.
-    price_for_guard = _price_frame_for_guard(price_cache)
-    first_prices = wp2b.first_price_by_security(price_for_guard)
-    windows = wp2b.apply_listing_guard(windows, first_prices)
+    first_by_symbol = _first_price_by_symbol(price_cache)
+    first_by_security = {}
+    for window in windows:
+        if window.symbol and window.symbol.upper() in first_by_symbol:
+            first_by_security.setdefault(window.security_id, first_by_symbol[window.symbol.upper()])
+    windows = wp2b.apply_listing_guard(windows, first_by_security, first_price_by_symbol=first_by_symbol)
     ineligible = sum(1 for window in windows if not window.research_eligible)
     print("LISTING_GUARD windows=%d ineligible=%d" % (len(windows), ineligible))
 
-    run_windows = [window for window in windows if window.security_id in set(resolved)]
-    prices_df, actions_df, panel_df, coverage_df = build_silver_and_gold(
-        run_windows, price_cache, action_cache, wp2b.RESEARCH_WINDOW_START, wp2b.RESEARCH_WINDOW_END)
+    price_by_security = _price_frame_by_security(windows, price_cache)
+    # Memory-safe silver assembly: ~3.5M price rows must NOT be built as a Python
+    # list of dicts (that OOM-killed an earlier run in a 4GB container). Each
+    # security's slim frame is projected and concatenated once.
+    slims = []
+    for security, frame in price_by_security.items():
+        if frame is None or len(frame) == 0:
+            continue
+        slim = frame[["trade_date", "raw_close"]].copy()
+        slim["security_id"] = security
+        slim["ticker"] = security
+        slims.append(slim[["security_id", "ticker", "trade_date", "raw_close"]])
+    if slims:
+        prices_df = pd.concat(slims, ignore_index=True)
+        prices_df["trade_date"] = prices_df["trade_date"].astype(str).str.slice(0, 10)
+    else:
+        prices_df = pd.DataFrame(columns=["security_id", "ticker", "trade_date", "raw_close"])
+    del slims
+    action_rows = []
+    for window in windows:
+        if not window.symbol:
+            continue
+        frame = action_cache.get(window.symbol)
+        actions = wp2b.actions_from_eodhd_rows(frame.to_dict("records") if frame is not None else [], window.security_id)
+        for action in actions:
+            action_rows.append({"security_id": window.security_id, "ticker": window.security_id,
+                                "kind": action.kind, "effective_date": action.effective_date,
+                                "numerator": action.numerator, "denominator": action.denominator,
+                                "amount": action.amount})
+    actions_df = pd.DataFrame(action_rows, columns=["security_id", "ticker", "kind", "effective_date", "numerator", "denominator", "amount"])
+    del action_rows
+    gc.collect()
 
     silver_prices = layers.write_silver_table(BRONZE_ROOT, SILVER_PRICES, prices_df, meta={"source": "eodhd"})
     silver_actions = layers.write_silver_table(BRONZE_ROOT, SILVER_ACTIONS, actions_df, meta={"source": "eodhd"})
-    membership_df = pd.DataFrame([{
-        "security_id": window.security_id, "ticker": window.ticker,
-        "membership_start": window.membership_start, "membership_end": window.membership_end,
-        "start_known": window.start_known, "research_eligible": window.research_eligible,
-        "unverifiable_before": window.unverifiable_before,
-        "source": "wikipedia:historical_components_sp500"}
-        for window in run_windows])
+    membership_df = _serialize_membership(windows)
     silver_membership = layers.write_silver_table(BRONZE_ROOT, SILVER_MEMBERSHIP, membership_df,
                                                   meta={"source": "wikipedia:historical_components_sp500"})
 
-    diagnostics = wp2b.membership_diagnostics(run_windows, wp2b.RESEARCH_WINDOW_START, wp2b.RESEARCH_WINDOW_END)
-    removed_ids = {window.security_id for window in run_windows if window.membership_end is not None}
-    summary = coverage_summary(coverage_df, unresolved, removed_ids)
+    coverage_df = build_coverage(windows, price_by_security, wp2b.RESEARCH_WINDOW_START, wp2b.RESEARCH_WINDOW_END)
+    removed_ids = {window.security_id for window in windows if window.membership_end is not None}
+    unresolved_windows = [item for item in resolutions if not item["resolved"]]
+    summary = coverage_summary(coverage_df, unresolved_windows, removed_ids,
+                               {window.security_id for window in windows})
     summary["membership_ineligible_assumed_starts"] = int(ineligible)
-    monthly = wp2b.monthly_member_counts(run_windows, wp2b.RESEARCH_WINDOW_START, wp2b.RESEARCH_WINDOW_END)
 
+    # WP2C-A1: EVERY current constituent must be RESOLVED or explicitly unresolved.
+    resolved_securities = {item["security_id"] for item in resolutions if item["resolved"]}
+    explicit_unresolved = {item["security_id"] for item in resolutions if not item["resolved"]}
+    current_set = {str(name).strip().upper() for name in constituents}
+    in_universe = {window.security_id for window in windows}
+    silently_absent = sorted(current_set - resolved_securities - explicit_unresolved)
+    summary["current_constituents"] = len(current_set)
+    summary["current_constituents_resolved"] = len(current_set & resolved_securities)
+    summary["current_constituents_explicitly_unresolved"] = sorted(current_set & explicit_unresolved)
+    summary["current_constituents_silently_absent"] = silently_absent
+    if silently_absent:
+        raise SystemExit("CURRENT_CONSTITUENT_INTEGRITY_FAIL silently_absent=%s" % silently_absent)
+
+    diagnostics = wp2b.membership_diagnostics(windows, wp2b.RESEARCH_WINDOW_START, wp2b.RESEARCH_WINDOW_END)
+    monthly = wp2b.monthly_member_counts(windows, wp2b.RESEARCH_WINDOW_START, wp2b.RESEARCH_WINDOW_END)
+
+    unresolved_artifact = {
+        "unresolved_windows": unresolved_windows,
+        "resolved_windows": [item for item in resolutions if item["resolved"]],
+        "explicitly_unresolved_securities": sorted(explicit_unresolved),
+        "silently_absent_securities": silently_absent,
+    }
     (ARTIFACT_DIR / "unresolved_identities.json").write_text(
-        json.dumps({"unresolved": unresolved, "resolved": resolved}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        json.dumps(unresolved_artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (ARTIFACT_DIR / "price_completeness.json").write_text(
-        json.dumps({"summary": summary, "per_security": coverage_df.to_dict("records")}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        json.dumps({"summary": summary, "per_window": coverage_df.to_dict("records")}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (ARTIFACT_DIR / "membership_diagnostics.json").write_text(
         json.dumps({"diagnostics": diagnostics, "monthly": monthly, "assumed_starts": assumed}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (ARTIFACT_DIR / "fetch_failures.json").write_text(json.dumps(failures, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (ARTIFACT_DIR / "layer_records.json").write_text(json.dumps({
         "silver_prices": silver_prices["version"], "silver_actions": silver_actions["version"],
         "silver_membership": silver_membership["version"],
-        "price_rows": price_rows, "action_rows": action_rows, "panel_rows": len(panel_df),
-        "windows": len(run_windows), "securities": len(resolved),
+        "price_rows": len(prices_df), "action_rows": len(actions_df),
+        "windows": len(windows), "securities": len({w.security_id for w in windows}),
     }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print("SUMMARY", json.dumps(summary, sort_keys=True))
-    print("DIAGNOSTICS windows=%d securities=%d overlaps=%d assumed=%d" % (
-        diagnostics["windows"], diagnostics["securities"], len(diagnostics["overlaps"]), len(diagnostics["assumed_start_securities"])))
-    print("BUILD_DONE panel_rows=%d" % len(panel_df))
+    print("BUILD_DONE windows=%d" % len(windows))
 
 
 if __name__ == "__main__":
