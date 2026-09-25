@@ -144,10 +144,25 @@ def write_silver_table(root, name, df, meta=None, ext="parquet"):
 
 
 def write_gold_table(root, name, df, meta=None, ext="parquet"):
-    """Persist a point-in-time model-ready gold table with provenance."""
+    """Persist a point-in-time model-ready gold table with provenance.
+
+    The gold version directory PHYSICALLY HOLDS the data (``data.<ext>``) as well
+    as its provenance, so an approved gold dataset is self-contained and cannot be
+    silently mutated by a later silver write. The bytes are copied from the same
+    content-addressed table, so ``fingerprint`` and legacy reads (which go through
+    :func:`read_silver_table`) stay byte-identical.
+    """
+    import shutil
+
     record = write_silver_table(root, name, df, meta=meta, ext=ext)
     record["layer"] = "gold"
     version_dir = layer_root(root, "gold", name) / record["version"]
+    version_dir.mkdir(parents=True, exist_ok=True)
+    source_path = Path(record["table_path"])
+    gold_path = version_dir / ("data.%s" % ext)
+    if source_path.is_file() and not gold_path.exists():
+        shutil.copyfile(str(source_path), str(gold_path))
+    record["gold_table_path"] = str(gold_path)
     _atomic_write_bytes(version_dir / "provenance.json", (json.dumps(record, sort_keys=True, indent=2) + "\n").encode("utf-8"))
     return record
 
