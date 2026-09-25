@@ -1,0 +1,31 @@
+{
+  "config_fingerprint": "241b2522d23e1e7a30ce80df7364c87e6569ad642ca43b20538b8b8fff0344bc",
+  "dataset_id": "dataset_dbaa77445b38",
+  "definition_version": "v2_wp4_keyes_variables_v1",
+  "diagnostic_version": "v2_wp4_keyes_diagnostics_v1",
+  "experiment_id": "experiment_5ed52dcf2f44",
+  "feature_set_id": "feature_set_56361533cc1b",
+  "git_commit": "437f68ce35e986d18b088a7f5f33288a1025dd96",
+  "known_limitations": [
+    "Keyes X12 has no historical point-in-time analyst/Value Line source; X12_PROXY (five-year revenue growth) is used and never reported as X12",
+    "SEC EDGAR companyfacts start around 2009, so early-universe fundamental variables are UNAVAILABLE, not estimated",
+    "CONSOLIDATED: fundamental variables are only as complete as the bounded EDGAR ingestion; missingness is observable",
+    "only genuinely observable 12m outcomes (target_observable=true) contribute to any diagnostic"
+  ],
+  "mode": "RESEARCH_V2",
+  "panel_version": "ac294282d8e949f2",
+  "replication_status": "PARTIAL_REPLICATION",
+  "signal_version": "v2_wp4_keyes_signals_v1",
+  "sources": [
+    "WP2C_GOLD_PANEL",
+    "WP3_GOLD_TARGETS",
+    "WP2B_SILVER_PRICES",
+    "WP2B_SILVER_ACTIONS",
+    "BENCHMARK_GOLD_SPY",
+    "WP3_SPY_BRONZE_ACTIONS",
+    "SEC_EDGAR"
+  ],
+  "synthetic_data_status": null,
+  "target_id": "target_set_888f68d1cfd0",
+  "target_version": "f244f86c22b2c2a4"
+}

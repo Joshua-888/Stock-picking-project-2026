@@ -55,6 +55,15 @@ CONCEPT_CANDIDATES = {
     "total_debt": ("LongTermDebt", "LongTermDebtNoncurrent", "DebtLongtermAndShorttermCombinedAmount"),
     "eps": ("EarningsPerShareDiluted", "EarningsPerShareBasic"),
     "free_cash_flow": ("NetCashProvidedByUsedInOperatingActivities",),
+    # WP4 additions: shares outstanding is required for a point-in-time P/E and a
+    # point-in-time market capitalisation; gross profit is required for a real
+    # gross margin. Both are reported facts; nothing is derived here.
+    "shares_outstanding": (
+        "EntityCommonStockSharesOutstanding",
+        "CommonStockSharesOutstanding",
+        "WeightedAverageNumberOfDilutedSharesOutstanding",
+    ),
+    "gross_profit": ("GrossProfit",),
 }
 
 # Fields whose reported value already is a cash-flow figure; used for the FCF
