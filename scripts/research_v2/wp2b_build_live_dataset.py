@@ -252,9 +252,13 @@ def build_silver_and_gold(windows, price_cache, action_cache, window_start, wind
             terminal_return = wp2b.classify_terminal_return(window, raw_frame, window_end)
         if quarantined:
             completeness = wp2b.PRICE_IDENTITY_UNRESOLVED
+        # Removal year (delisting epoch) for the by-year completeness report; a
+        # still-listed security is reported as 'ongoing'.
+        _ends = [str(w.membership_end)[:4] for w in by_security[security] if w.membership_end]
+        removal_year = max(_ends) if _ends else "ongoing"
         coverage.append({"security_id": security, "price_completeness": completeness,
                          "terminal_behavior": terminal, "terminal_return_status": terminal_return,
-                         "quarantined_wrong_company": bool(quarantined),
+                         "quarantined_wrong_company": bool(quarantined), "removal_year": removal_year,
                          "price_rows": int(len(raw_frame) if raw_frame is not None else 0),
                          "action_rows": len(actions)})
     prices_df = pd.DataFrame(price_rows, columns=["security_id", "ticker", "trade_date", "raw_close"])
@@ -283,10 +287,15 @@ def coverage_summary(coverage_df, unresolved, removed_ids):
     counts = Counter(coverage_df["price_completeness"].tolist()) if total else Counter()
     removed_counts = Counter(coverage_df.loc[coverage_df["security_id"].isin(removed_ids), "price_completeness"].tolist()) if total else Counter()
     by_year = {}
+    by_delisting_type = {}
     if total:
         for _, row in coverage_df.iterrows():
-            key = str(row["security_id"])
-            by_year.setdefault(key, [])
+            year = str(row.get("removal_year") or "ongoing")
+            dtype = str(row.get("terminal_behavior") or "unknown")
+            by_year.setdefault(year, Counter())[row["price_completeness"]] += 1
+            by_delisting_type.setdefault(dtype, Counter())[row["price_completeness"]] += 1
+    by_year = {key: dict(value) for key, value in sorted(by_year.items())}
+    by_delisting_type = {key: dict(value) for key, value in sorted(by_delisting_type.items())}
     resolved_complete = counts.get(wp2b.PRICE_COMPLETE, 0)
     percent = round(100.0 * resolved_complete / total, 2) if total else 0.0
     removed_percent = round(100.0 * removed_counts.get(wp2b.PRICE_COMPLETE, 0) / max(1, sum(removed_counts.values())), 2)
@@ -324,6 +333,8 @@ def coverage_summary(coverage_df, unresolved, removed_ids):
         "removed_without_usable_terminal_price_ids": sorted(removed_uncertain_ids),
         "wrong_company_quarantined": quarantined,
         "label_loss_percent": round(100.0 * removed_unknown / removed_total, 2),
+        "by_year": by_year,
+        "by_delisting_type": by_delisting_type,
     }
 
 
