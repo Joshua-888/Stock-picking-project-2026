@@ -1,0 +1,29 @@
+{
+  "certification_schema": "wp2_dataset_certification_v1",
+  "dataset_id": "dataset_dbaa77445b38",
+  "dataset_fingerprint": "ac294282d8e949f270912682cf70a803f596c030885657b0aaf540536e2663ad",
+  "policy": "docs/research_v2/data_readiness_policy.md",
+  "policy_version": "wp2c_2026-09-25",
+  "research_window": ["2007-01-01", "2026-09-25"],
+  "rows": 121787,
+  "securities": 856,
+  "removed_constituents": 352,
+  "synthetic_data_status": "none",
+  "producing_code_commit": "12e622ca08d60b8461300506251cbdcef82475df",
+  "security_master_version": "d4ba066eb6cf81a115f6626cb95d57d30e842c1f4c75ec84149b35b8dfd7d349",
+  "universe_version": "0ce5054a2d66ce76ee68b51ac3f41cda90b8444cf134569ddd7a16044086a796",
+  "censoring": {"total_candidate_labels": 121787, "observable": 111130, "censored": 10657, "censoring_pct": 8.75},
+  "certified_at": "2026-09-25T23:16:45+02:00",
+  "verdicts": {
+    "data_integrity_engineer": "RESEARCH_READY_WITH_LIMITATIONS",
+    "research_ops_engineer": "REPRODUCIBLE",
+    "quant_auditor": {"audit_id": "AUDIT_WP2C_R3_2026-09-25", "verdict": "RESEARCH_READY_WITH_LIMITATIONS", "hard_defects": 0}
+  },
+  "final_status": "RESEARCH_READY_WITH_LIMITATIONS",
+  "documented_limitations": [
+    "EODHD publishes no delisting/terminal returns; censored (flagged) forward labels; censored rows excluded from supervised labels",
+    "no permanent security id/CIK in source; 10 unresolved windows / 8 securities explicit, never guessed",
+    "Wikipedia membership-source gaps (BSC, Enron, Circuit City, WaMu, old GM; NCC missing 2008 removal)",
+    "membership availability uses effective date only"
+  ]
+}
