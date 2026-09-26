@@ -1,0 +1,36 @@
+{
+  "certification_schema": "wp4_certification_v1",
+  "experiment_id": "experiment_5ed52dcf2f44",
+  "dataset_id": "dataset_dbaa77445b38",
+  "target_id": "target_set_888f68d1cfd0",
+  "target_version": "f244f86c22b2c2a4",
+  "feature_set_id": "feature_set_56361533cc1b",
+  "panel_version": "ac294282d8e949f2",
+  "producing_code_commit": "a1c0a92c072ba0f0232d363f53824984c7b58d9a",
+  "branch": "feat/v2-wp2b-universe-delisted-unblock",
+  "corrected_provenance": "provenance/wp4/corrections/experiment_609b46519a41.json",
+  "corrected_provenance_id": "experiment_609b46519a41",
+  "supersession_record": "provenance/wp4/corrections/supersession_experiment_5ed52dcf2f44.json",
+  "resolver_index": "provenance/wp4/corrections/index.json",
+  "original_superseded_provenance": [
+    "provenance/wp4/experiment_5ed52dcf2f44.json",
+    "provenance/wp4/latest_experiment.json"
+  ],
+  "wfv_review_id": "WFV-WP4-TEMPORAL-REVIEW-001",
+  "wfv_verdict": "WFV_REVIEW_PASS",
+  "replication_status": "PARTIAL_REPLICATION",
+  "rebuild_equivalence": {
+    "result": "BYTE_IDENTICAL_SCIENTIFIC_CONTENT",
+    "only_difference": "wp4_run_summary.json identity metadata git_commit (437f68ce -> a1c0a92)",
+    "artifact_set_fingerprint": "e22750397c8e83a6788fddef0756eb65c190fa993604e2560adaa8ec142b575d"
+  },
+  "known_limitations": [
+    "Keyes X12 has no historical point-in-time analyst/Value Line source; X12_PROXY (five-year revenue growth) is used and never reported as X12",
+    "SEC EDGAR companyfacts start around 2009, so early-universe fundamental variables are UNAVAILABLE, not estimated",
+    "CONSOLIDATED: fundamental variables are only as complete as the bounded EDGAR ingestion; missingness is observable",
+    "only genuinely observable 12m outcomes (target_observable=true) contribute to any diagnostic",
+    "overlapping 12m labels produce pooled IC diagnostics; per-date averaging and effective sample independence were not established (WFV non-blocking concern)"
+  ],
+  "certified_at": "2026-09-26T09:58:00+02:00",
+  "status": "WP4_CERTIFIED_PENDING_AUDIT"
+}
