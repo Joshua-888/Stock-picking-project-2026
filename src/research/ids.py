@@ -24,6 +24,7 @@ KINDS = (
     "validation",
     "audit",
     "promotion",
+    "holdout",
 )
 
 _ID_RE = re.compile(r"^(?P<kind>[a-z_]+)_(?P<digest>[0-9a-f]{12})$")
@@ -102,3 +103,7 @@ def audit_id(payload):
 
 def promotion_id(payload):
     return make_id("promotion", payload)
+
+
+def holdout_id(payload):
+    return make_id("holdout", payload)
