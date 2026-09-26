@@ -69,24 +69,21 @@ def test_producing_commit_contains_producer_files():
 # ── 2. producing commit is an ancestor of / equal to a valid repo state ──────
 
 def test_producing_commit_is_ancestor_of_certification_commit():
-    ancestor = _git("merge-base", "--is-ancestor", PRODUCING_COMMIT, "HEAD")
     head = _git("rev-parse", "HEAD")
     if head is None:
         pytest.skip("git unavailable")
     equal = head == PRODUCING_COMMIT
-    # merge-base --is-ancestor returns empty stdout and exit 0 on success; _git
-    # returns None only when it is unavailable, not when the check fails.
+    # merge-base --is-ancestor returns empty stdout and exit 0 on success (also
+    # true when the commits are equal); _git returns None only when it is
+    # unavailable, not when the check fails.
     result = subprocess.run(
         ["git", "merge-base", "--is-ancestor", PRODUCING_COMMIT, "HEAD"],
         cwd=str(REPO_ROOT), capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0, "producing commit is not an ancestor of HEAD"
-    assert equal or HEAD_IS_VALID_ANCESTOR(HEAD)
-
-
-def HEAD_IS_VALID_ANCESTOR(head):
-    """Pr-return that the current HEAD is a real, resolvable commit."""
-    return _git("cat-file", "-t", head) == "commit"
+    # The producing commit is an ancestor of (or equal to) HEAD, and HEAD must
+    # resolve to a real commit object.
+    assert equal or _git("cat-file", "-t", head) == "commit"
 
 
 # ── 3. superseded provenance cannot be selected as canonical ─────────────────
