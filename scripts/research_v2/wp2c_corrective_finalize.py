@@ -310,7 +310,7 @@ def main(argv=None):
     ledger = provenance_ledger.persist_manifest(manifest, root=PROVENANCE_ROOT, extra={
         "build_script": "scripts/research_v2/wp2b_build_live_dataset.py",
         "finalize_script": "scripts/research_v2/wp2c_corrective_finalize.py",
-        "producing_commit": current_git_commit() or "unknown",
+        "producing_commit": manifest.get("git_commit") or "unknown",
         "rows": int(len(panel)),
         "securities": int(panel["security_id"].nunique()),
         "removed_constituents": len(removed_ids),
