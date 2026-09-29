@@ -48,13 +48,19 @@ from src.research.discovery.quantiles import quantile_profile
 from src.research.discovery.redundancy import (
     ic_series_correlation,
     median_rank_correlation_matrix,
+    pair_similarity,
     redundancy_clusters,
 )
 from src.research.discovery.scorecard import build_scorecard, classify_candidate
 from src.research.discovery.stability import stability_report
 from src.research.discovery.io import discovery_payload, write_experiment
 from src.research.discovery.catalog import catalog_payload
+from src.research.holdout import embargo_cutoff, embargo_mask, holdout_mask, locked_holdout
+from src.research.discovery.panel import development_mask
 from src.research.ids import experiment_id, is_valid_id
+
+import json
+from pathlib import Path
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
@@ -89,7 +95,7 @@ def _evidence(**overrides):
         "quantiles": {"spread": 0.05, "monotonic": True},
         "stability": {"direction_consistent": True, "sufficient_months": True,
                       "short_period_only": False, "sign_flip": False},
-        "redundancy": {"cluster_has_stronger_member": False, "cluster": "cluster_00"},
+        "redundancy": {"redundant": False, "cluster": "cluster_00", "group_size": 1},
         "missingness": {"present_minus_missing_mean": 0.01},
     }
     for key, value in overrides.items():
@@ -336,7 +342,7 @@ def test_scorecard_robust_candidate_path():
 
 
 def test_scorecard_redundant_beats_robust():
-    evidence = _evidence(redundancy={"cluster_has_stronger_member": True, "cluster": "cluster_00"})
+    evidence = _evidence(redundancy={"redundant": True, "cluster": "cluster_00", "group_size": 2})
     status, _reasons = classify_candidate(evidence)
     assert status == "REDUNDANT"
 
@@ -411,4 +417,260 @@ def test_catalog_has_no_zero_fill_missing_policy():
         assert spec.missing_policy != "ZERO_FILL"
         # Every candidate declares an honest PIT status; proxies stay labelled.
         assert spec.pit_status in {"POINT_IN_TIME", "UNAVAILABLE", "PROXY", "UNKNOWN"}
+
+
+# ── PHASE 12: block bootstrap is a GENUINE resample, not a rotation ───────────
+
+def test_block_bootstrap_is_not_a_full_series_rotation():
+    # A full-series rotation (= arange(n)+start mod n) makes EVERY replicate equal
+    # to the observed mean, so a rotation yields a zero bootstrap variance on any
+    # nonconstant input. A genuine moving/circular block resample must have a
+    # strictly positive standard deviation of the bootstrap means here.
+    rng = np.random.default_rng(17)
+    values = rng.normal(0.2, 0.1, size=48)
+    result = block_bootstrap_mean(values, block=6, iterations=1000, seed=20260926)
+    assert result["n"] == 48
+    assert result["mean_std"] is not None
+    assert result["mean_std"] > 0.0
+    # The rotation degeneracy produced p ~= 1/1001; a real resample is not forced there.
+    assert 0.0 <= result["p_value"] <= 1.0
+
+
+def test_block_bootstrap_whole_series_block_is_a_rotation():
+    # Contrast case that proves the mechanism: when the block length equals the
+    # series length every replicate is a single circular rotation of the whole
+    # series, so the bootstrap mean equals the observed mean and the variance
+    # collapses. This is exactly the degenerate behaviour the fix removes for the
+    # configured block length.
+    rng = np.random.default_rng(23)
+    values = rng.normal(0.1, 0.2, size=30)
+    degenerate = block_bootstrap_mean(values, block=30, iterations=200, seed=5)
+    assert degenerate["n_blocks"] == 1
+    assert degenerate["mean_std"] == pytest.approx(0.0, abs=1e-12)
+    genuine = block_bootstrap_mean(values, block=6, iterations=200, seed=5)
+    assert genuine["mean_std"] > degenerate["mean_std"]
+
+
+def test_block_bootstrap_reports_block_count_and_is_deterministic():
+    rng = np.random.default_rng(29)
+    values = rng.normal(0.05, 0.15, size=37)
+    result = block_bootstrap_mean(values, block=6, iterations=500, seed=20260926)
+    # ceil(37 / 6) = 7 independently sampled blocks feed each replicate.
+    assert result["n_blocks"] == 7
+    repeat = block_bootstrap_mean(values, block=6, iterations=500, seed=20260926)
+    assert repeat["mean"] == result["mean"]
+    assert repeat["mean_std"] == result["mean_std"]
+    assert repeat["p_value"] == result["p_value"]
+    assert repeat["ci_low"] == result["ci_low"]
+    assert repeat["ci_high"] == result["ci_high"]
+
+
+def test_block_bootstrap_matches_iid_fixture_when_block_is_one():
+    # With block=1 the moving-block bootstrap reduces to IID resampling, so the
+    # bootstrap standard deviation must approximate the analytic IID standard
+    # error of the mean on a known synthetic fixture.
+    rng = np.random.default_rng(31)
+    values = rng.normal(0.0, 1.0, size=400)
+    result = block_bootstrap_mean(values, block=1, iterations=4000, seed=20260926)
+    analytic_se = float(np.std(values, ddof=1)) / np.sqrt(len(values))
+    assert result["mean_std"] == pytest.approx(analytic_se, rel=0.25)
+
+
+def test_block_bootstrap_constant_input_has_zero_variance():
+    values = np.full(24, 0.3)
+    result = block_bootstrap_mean(values, block=6, iterations=300, seed=1)
+    assert result["mean"] == pytest.approx(0.3)
+    assert result["mean_std"] == pytest.approx(0.0, abs=1e-15)
+    assert result["ci_low"] <= result["mean"] <= result["ci_high"]
+
+
+# ── PHASE 12: redundancy is descriptive, no full-sample winner, no chaining ───
+
+def _rank_matrix(entries):
+    names = sorted({name for pair in entries for name in pair})
+    matrix = pd.DataFrame(np.eye(len(names)), index=names, columns=names, dtype="float64")
+    for (left, right), value in entries.items():
+        matrix.loc[left, right] = value
+        matrix.loc[right, left] = value
+    return matrix
+
+
+def test_redundancy_complete_linkage_does_not_chain_into_one_group():
+    # a~b and b~c are each strongly correlated, but a and c are NOT: single linkage
+    # would transitively fuse all three into one cluster. Complete linkage must not.
+    matrix = _rank_matrix({("a", "b"): 0.95, ("b", "c"): 0.95, ("a", "c"): 0.05})
+    clusters = redundancy_clusters(["a", "b", "c"], rank_matrix=matrix, rank_threshold=0.7)
+    assert clusters["linkage"] == "complete"
+    assert clusters["member_to_cluster"]["a"] == clusters["member_to_cluster"]["b"]
+    assert clusters["member_to_cluster"]["a"] != clusters["member_to_cluster"]["c"]
+    assert len(clusters["clusters"]) >= 2
+    # no single giant cluster swallowing every candidate
+    assert max(len(members) for members in clusters["clusters"].values()) < 3
+
+
+def test_redundancy_grouping_is_deterministic():
+    matrix = _rank_matrix({("a", "b"): 0.9, ("b", "c"): 0.8, ("a", "c"): 0.1, ("c", "d"): 0.75})
+    first = redundancy_clusters(["d", "b", "a", "c"], rank_matrix=matrix, rank_threshold=0.7)
+    second = redundancy_clusters(["a", "b", "c", "d"], rank_matrix=matrix, rank_threshold=0.7)
+    assert first["clusters"] == second["clusters"]
+    assert first["member_to_cluster"] == second["member_to_cluster"]
+
+
+def test_redundancy_elects_no_full_sample_cluster_winner():
+    matrix = _rank_matrix({("a", "b"): 0.92, ("c", "d"): 0.88})
+    clusters = redundancy_clusters(["a", "b", "c", "d"], rank_matrix=matrix, rank_threshold=0.7)
+    # No structural field may elect a full-sample winner.
+    assert set(clusters).isdisjoint({"winner", "cluster_winner", "selected_feature", "representative"})
+    assert set(clusters["member_to_cluster"].values()).issubset(set(clusters["clusters"]))
+    # Each group is a plain member list: no member is promoted to a representative.
+    for members in clusters["clusters"].values():
+        assert all(isinstance(member, str) for member in members)
+    assert "no cluster representative is elected" in clusters["note"]
+
+
+def test_pair_similarity_ignores_outcome_sign_and_uses_pre_outcome_structure():
+    # Similarity is |correlation| of pre-outcome structure: a perfect sign flip is
+    # still redundancy and no outcome performance enters the computation.
+    matrix = _rank_matrix({("a", "b"): -1.0})
+    assert pair_similarity(matrix, None, "a", "b") == pytest.approx(1.0)
+    assert pair_similarity(None, None, "a", "b") is None
+
+
+# ── PHASE 12: temporal safety of the development slice ────────────────────────
+
+def test_development_slice_has_zero_holdout_and_zero_embargo_rows():
+    holdout = locked_holdout()
+    frame = pd.DataFrame({
+        "security_id": ["a", "b", "c", "d", "e", "f"],
+        "feature_asof": ["2019-01-31", "2020-12-31", "2021-01-01",
+                         "2021-06-30", "2022-01-01", "2023-05-31"],
+        "target_observable": [True, True, True, True, True, True],
+        "future_12m_excess_return": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+    })
+    selected = development_rows(frame)
+    # Only the two pre-embargo rows survive.
+    assert list(selected["security_id"]) == ["a", "b"]
+    assert int(holdout_mask(selected).sum()) == 0
+    assert int(embargo_mask(selected).sum()) == 0
+    cutoff = embargo_cutoff()
+    stamps = pd.to_datetime(selected["feature_asof"], utc=True)
+    assert bool((stamps < cutoff).all())
+    assert bool((stamps < holdout.holdout_start).all())
+
+
+def test_development_mask_is_pure_function_of_frozen_holdout_boundaries():
+    cutoff = embargo_cutoff()
+    frame = pd.DataFrame({
+        "feature_asof": [str(cutoff - pd.Timedelta(days=1))[:10], str(cutoff)[:10]],
+        "target_observable": [True, True],
+    })
+    mask = development_mask(frame)
+    assert list(mask) == [True, False]
+
+
+def test_no_development_row_carries_a_future_censored_label():
+    frame = _panel(n_months=6, n_names=30)
+    frame.loc[frame.index[:5], "target_observable"] = False
+    frame.loc[frame.index[:5], "future_12m_excess_return"] = np.nan
+    selected = development_rows(frame)
+    assert selected["target_observable"].all()
+    assert selected["future_12m_excess_return"].notna().all()
+
+
+# ── PHASE 12: corrected-input binding of the corrective WP5 run ──────────────
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+CORRECTIONS_DIR = REPO_ROOT / "provenance" / "wp5" / "dataset_corrections"
+SUPERSESSION_INDEX = CORRECTIONS_DIR / "index.json"
+OLD_WP5_PROV = REPO_ROOT / "provenance" / "wp5" / "experiment_902a843c7ec6" / "experiment_902a843c7ec6.json"
+OLD_EXPERIMENT_ID = "experiment_902a843c7ec6"
+
+# The corrective experiment id is content-addressed: its value depends on the
+# producing commit that is recorded in its binding payload, so the tests resolve
+# it from the supersession index instead of hard-coding a stale id.
+NEW_DATASET_ID = "dataset_35a278e17c13"
+NEW_TARGET_ID = "target_set_d2bb16610bce"
+NEW_FEATURE_SET_ID = "feature_set_4f7b43726310"
+CORRECTED_WP4_EXPERIMENT_ID = "experiment_834a7e60f13c"
+OLD_DATASET_ID = "dataset_dbaa77445b38"
+OLD_TARGET_ID = "target_set_888f68d1cfd0"
+OLD_FEATURE_SET_ID = "feature_set_56361533cc1b"
+
+PRODUCER_FILES = (
+    "scripts/research_v2/wp5_corrective_discovery.py",
+    "src/research/discovery/builder.py",
+    "src/research/discovery/inference.py",
+    "src/research/discovery/redundancy.py",
+    "src/research/discovery/scorecard.py",
+)
+
+
+def _load_json(path):
+    if not Path(path).is_file():
+        pytest.skip("corrective WP5 artefact not present: %s" % path)
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _corrective_experiment_id():
+    index = _load_json(SUPERSESSION_INDEX)
+    entry = index["entries"].get(OLD_EXPERIMENT_ID)
+    if entry is None:
+        pytest.skip("no supersession entry for %s" % OLD_EXPERIMENT_ID)
+    return entry["new_experiment_id"]
+
+
+def _corrective_prov():
+    new_id = _corrective_experiment_id()
+    return new_id, _load_json(CORRECTIONS_DIR / ("%s.json" % new_id))
+
+
+def _git(*args):
+    import subprocess
+
+    result = subprocess.run(["git", *args], cwd=str(REPO_ROOT),
+                            capture_output=True, text=True, check=False)
+    return None if result.returncode != 0 else result.stdout.strip()
+
+
+def test_corrective_experiment_binds_corrected_upstream_ids():
+    _new_id, record = _corrective_prov()
+    assert record["dataset_id"] == NEW_DATASET_ID
+    assert record["target_id"] == NEW_TARGET_ID
+    assert record["feature_set_id"] == NEW_FEATURE_SET_ID
+    assert record["corrected_wp4_experiment_id"] == CORRECTED_WP4_EXPERIMENT_ID
+    assert record["corrected_from_experiment_id"] == OLD_EXPERIMENT_ID
+    assert record["holdout_id"] == "holdout_e1a63def9749"
+    assert record["mode"] == "RESEARCH_V2"
+    assert record["corrective"] is True
+
+
+def test_corrective_run_never_rebinds_the_old_upstream_ids():
+    _new_id, record = _corrective_prov()
+    for stale in (OLD_DATASET_ID, OLD_TARGET_ID, OLD_FEATURE_SET_ID, "experiment_5ed52dcf2f44"):
+        assert stale not in json.dumps(record)
+
+
+def test_corrective_producing_commit_actually_contains_the_producer_code():
+    _new_id, record = _corrective_prov()
+    commit = record["git_commit"]
+    listing = _git("ls-tree", "-r", "--name-only", commit)
+    if listing is None:
+        pytest.skip("git unavailable")
+    present = set(listing.splitlines())
+    missing = [name for name in PRODUCER_FILES if name not in present]
+    assert not missing, "producing commit %s is missing producer files: %s" % (commit, missing)
+    # The producing commit must also be an ancestor of the current branch state.
+    ancestor = _git("merge-base", "--is-ancestor", commit, "HEAD")
+    assert ancestor is not None, "producing commit %s is not an ancestor of HEAD" % commit
+
+
+def test_supersession_record_maps_old_to_new_without_overwriting_the_old():
+    index = _load_json(SUPERSESSION_INDEX)
+    entry = index["entries"][OLD_EXPERIMENT_ID]
+    assert entry["canonical_provenance_ref"].endswith("%s.json" % entry["new_experiment_id"])
+    # The historical experiment is preserved and still bound to its own upstream ids.
+    old = _load_json(OLD_WP5_PROV)
+    assert old["dataset_id"] == OLD_DATASET_ID
+    assert old["target_id"] == OLD_TARGET_ID
+    assert old["feature_set_id"] == OLD_FEATURE_SET_ID
 

@@ -40,6 +40,7 @@ from .quantiles import quantile_profile
 from .redundancy import (
     ic_series_correlation,
     median_rank_correlation_matrix,
+    pair_similarity,
     redundancy_clusters,
 )
 from .scorecard import build_scorecard, classification_counts
@@ -126,29 +127,40 @@ def feature_evidence(frame, feature, config):
 # ── Redundancy wiring ────────────────────────────────────────────────────────
 
 def build_redundancy(frame, per_feature, config):
-    """Compute rank/IC matrices and descriptive clusters for all candidates."""
+    """Compute rank/IC matrices and DESCRIPTIVE redundancy groups for all candidates.
+
+    The grouping uses only pre-outcome similarity structure (cross-sectional rank
+    correlation and monthly IC-series correlation) with complete linkage; the
+    economic family is carried as factual evidence. NO feature is ever elected as a
+    group winner: the full-sample outcome performance (mean IC) is deliberately NOT
+    used to rank or select members, because that would be a target-driven
+    full-sample selection decision belonging to WP6 inside training windows.
+    """
     names = list(FEATURE_NAMES)
+    families = {name: CATALOG_BY_NAME[name].cluster_family for name in names}
     rank_matrix = median_rank_correlation_matrix(frame, names)
     ic_series = {name: per_feature[name]["ic_series"] for name in names if name in per_feature}
     ic_matrix = ic_series_correlation(ic_series, names)
     clusters = redundancy_clusters(
-        names, rank_matrix=rank_matrix, ic_matrix=ic_matrix,
+        names, rank_matrix=rank_matrix, ic_matrix=ic_matrix, families=families,
         rank_threshold=config.redundancy_rank_corr, ic_threshold=config.redundancy_ic_corr,
     )
-    # A member is redundant when a STRONGER-looking member shares its cluster.
-    strength = {}
-    for name in names:
-        mean_ic = per_feature.get(name, {}).get("ic", {}).get("mean_ic")
-        strength[name] = abs(mean_ic) if mean_ic is not None else -1.0
     for cluster_id, members in clusters["clusters"].items():
-        best = max(strength.get(member, -1.0) for member in members)
         for member in members:
-            stronger = [peer for peer in members if peer != member and strength.get(peer, -1.0) > strength.get(member, -1.0)]
+            peers = [peer for peer in members if peer != member]
+            similarities = [
+                value for value in (pair_similarity(rank_matrix, ic_matrix, member, peer) for peer in peers)
+                if value is not None
+            ]
             evidence = per_feature.setdefault(member, {}).setdefault("redundancy", {})
             evidence["cluster"] = cluster_id
-            evidence["cluster_size"] = len(members)
-            evidence["cluster_best_abs_ic"] = best
-            evidence["cluster_has_stronger_member"] = bool(stronger and abs(strength.get(member, 0.0)) < best)
+            evidence["group_size"] = len(members)
+            # Descriptive only: membership in a similarity group is the fact.
+            evidence["redundant"] = bool(len(members) > 1)
+            evidence["similarity_max"] = max(similarities) if similarities else None
+            evidence["similarity_min"] = min(similarities) if similarities else None
+            evidence["group_families"] = clusters["cluster_families"].get(cluster_id, [])
+            evidence["linkage"] = clusters.get("linkage")
     return rank_matrix, ic_matrix, clusters
 
 

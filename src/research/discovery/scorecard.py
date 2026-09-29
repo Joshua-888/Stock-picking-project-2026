@@ -75,9 +75,12 @@ def classify_candidate(evidence, config=None):
     spread = quantiles.get("spread")
     monotonic = quantiles.get("monotonic")
 
-    # 4. Redundancy: inseparable from a stronger peer.
-    if redundancy.get("cluster_has_stronger_member"):
-        return "REDUNDANT", ["shares a redundancy cluster with a stronger candidate"]
+    # 4. Redundancy: descriptively inseparable from another candidate.
+    #    The flag is group MEMBERSHIP only (complete-linkage similarity); it is
+    #    deliberately NOT driven by full-sample outcome performance, and no
+    #    cluster winner is elected on the full sample.
+    if redundancy.get("redundant"):
+        return "REDUNDANT", ["statistically inseparable from another candidate in a complete-linkage similarity group"]
 
     # 5. Direction instability. The hypothesized direction is informational only;
     #    what matters for a usable signal is a coherent average and median sign.

@@ -88,29 +88,50 @@ def iid_mean_test(values):
 
 
 def block_bootstrap_mean(values, block=6, iterations=1000, seed=20260926):
-    """Circular block bootstrap CI for the mean IC and a two-sided p-value."""
+    """Circular moving-block bootstrap CI for the mean monthly IC.
+
+    Adjacent monthly IC values are NOT independent (a 12-month forward label is
+    observed by roughly twelve consecutive monthly predictions), so resampling
+    single observations as if IID would understate the variance of the mean and
+    manufacture significance. This routine resamples *blocks* of consecutive
+    observations: for every replicate it draws ``ceil(n / block)`` INDEPENDENT
+    circular starting positions, concatenates the ``block``-long runs and truncates
+    the result to ``n`` observations.
+
+    That is a genuine dependence-preserving resample of overlapping windows, NOT a
+    full-series rotation (a rotation would leave every replicate equal to the
+    observed mean and force a zero bootstrap variance). ``mean_std`` reports the
+    standard deviation of the bootstrap means so the non-degeneracy is observable,
+    and the returned p-value is DESCRIPTIVE evidence only - it is never used to
+    force a significance claim (HAC/Newey-West on the same series remains the
+    primary inference instrument).
+    """
     arr = _clean(values)
     n = len(arr)
     if n < 2:
         return {"n": n, "mean": None, "ci_low": None, "ci_high": None, "p_value": None,
-                "iterations": 0, "block": int(block)}
+                "iterations": 0, "block": int(block), "mean_std": None, "n_blocks": 0}
     block = max(1, int(block))
+    block = min(block, n)
+    n_blocks = int(np.ceil(n / block))
     rng = np.random.default_rng(int(seed))
+    span = np.arange(block)
     means = np.empty(int(iterations), dtype="float64")
     for index in range(int(iterations)):
-        start = int(rng.integers(0, n))
-        picks = (np.arange(n) + start) % n
-        sample = arr[picks]
-        means[index] = sample.mean()
+        starts = rng.integers(0, n, size=n_blocks)
+        picks = ((starts[:, None] + span[None, :]) % n).reshape(-1)[:n]
+        means[index] = arr[picks].mean()
     low, high = np.percentile(means, [2.5, 97.5])
     mean = float(arr.mean())
+    std = float(np.std(means, ddof=1)) if len(means) > 1 else 0.0
     # Two-sided bootstrap p-value around zero, centred by the observed mean.
     centred = means - mean
     p_value = float(np.mean(np.abs(centred) >= abs(mean)))
     if p_value == 0.0:
         p_value = float(1.0 / (int(iterations) + 1))
     return {"n": n, "mean": mean, "ci_low": float(low), "ci_high": float(high),
-            "p_value": p_value, "iterations": int(iterations), "block": block}
+            "p_value": p_value, "iterations": int(iterations), "block": block,
+            "mean_std": std, "n_blocks": n_blocks}
 
 
 def dependence_diagnostics(values, config=None):
