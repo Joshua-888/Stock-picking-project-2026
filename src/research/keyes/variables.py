@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 from ..data.availability import price_available_at, to_utc_timestamp
+from ..data.action_validation import validated_action_factors
 from ..features.keyes import proxy_variable
 
 DEFINITION_VERSION = "v2_wp4_keyes_variables_v1"
@@ -317,43 +318,31 @@ class PriceHistory:
             raise KeyesVariableError("%s frame is missing security_id" % what)
         return {key: chunk for key, chunk in frame.groupby("security_id", sort=True)}
 
-    @staticmethod
-    def _factor(action, ordinals, raw):
-        kind = str(action.get("kind"))
-        if kind == "split":
-            numerator = action.get("numerator")
-            denominator = action.get("denominator")
-            if numerator in (None, 0) or pd.isna(numerator) or pd.isna(denominator):
-                return None
-            return float(denominator) / float(numerator)
-        if kind == "dividend":
-            amount = action.get("amount")
-            if amount is None or pd.isna(amount):
-                return None
-            effective = int(pd.Timestamp(str(action.get("effective_date"))).value // (24 * 3600 * 10 ** 9))
+    def _apply_actions(self, ordinals, raw, action_frame):
+        """Back-adjust raw closes by VALIDATED corporate-action factors.
+
+        Every action is routed through :func:`action_validation.validated_action_factors`
+        so identical rows are de-duplicated, a mis-typed/unresolvable dividend is
+        skipped, an evidence-backed ``/100`` unit correction is applied, and an
+        economically impossible dividend factor is refused. No invalid action is
+        silently compounded into the trailing-return series.
+        """
+        if len(action_frame) == 0:
+            return raw.astype("float64").copy()
+
+        def close_lookup(day_text):
+            effective = int(pd.Timestamp(day_text).value // (24 * 3600 * 10 ** 9))
             position = int(np.searchsorted(ordinals, effective, side="right")) - 1
             if position < 0:
                 return None
-            close_on_ex = raw[position]
-            if not np.isfinite(close_on_ex) or close_on_ex == 0.0:
-                return None
-            return (float(close_on_ex) - float(amount)) / float(close_on_ex)
-        return None
+            value = raw[position]
+            return None if not np.isfinite(value) else float(value)
 
-    def _apply_actions(self, ordinals, raw, action_frame):
-        if len(action_frame) == 0:
+        prepared, _dropped = validated_action_factors(action_frame.to_dict("records"), close_lookup)
+        if not prepared:
             return raw.astype("float64").copy()
-        dated = []
-        for record in action_frame.to_dict("records"):
-            effective = pd.to_datetime(str(record.get("effective_date")), errors="coerce")
-            if effective is None or pd.isna(effective):
-                continue
-            factor = self._factor(record, ordinals, raw)
-            if factor is None:
-                continue
-            dated.append((int(effective.value // (24 * 3600 * 10 ** 9)), float(factor)))
-        if not dated:
-            return raw.astype("float64").copy()
+        dated = [(int(pd.Timestamp(str(day)).value // (24 * 3600 * 10 ** 9)), float(factor))
+                 for day, factor in prepared]
         dated.sort(key=lambda item: item[0])
         effective = np.array([item[0] for item in dated], dtype="int64")
         all_factors = np.array([item[1] for item in dated], dtype="float64")

@@ -33,6 +33,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from .availability import to_utc_timestamp
+from .action_validation import classify_dividend, dividend_factor, validated_action_factors
 
 SPLIT = "split"
 DIVIDEND = "dividend"
@@ -152,13 +153,19 @@ def _raw_close_on(raw_by_date, effective_date):
 
 
 def action_factor(action, raw_by_date):
-    """Back-adjustment factor applied to prices BEFORE the action, or None."""
+    """Back-adjustment factor applied to prices BEFORE the action, or None.
+
+    A dividend is validated before any factor is returned: a plausibility check
+    against the ex-date close rejects an unresolvable amount and applies the
+    evidence-backed ``/100`` unit correction only where documented (see
+    :mod:`src.research.data.action_validation`). ``None`` means the action must not
+    be compounded, never a fabricated factor.
+    """
     if action.kind == SPLIT:
         return float(action.denominator) / float(action.numerator)
     close_on_ex = _raw_close_on(raw_by_date, action.effective_date)
-    if close_on_ex in (None, 0.0):
-        return None
-    return (close_on_ex - float(action.amount)) / close_on_ex
+    status, normalized, _method, _reason = classify_dividend(action.amount, close_on_ex)
+    return dividend_factor(normalized, close_on_ex, status)
 
 
 def _raw_index(frame, ticker=None):

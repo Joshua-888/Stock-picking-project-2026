@@ -29,6 +29,7 @@ import pandas as pd
 from .availability import DEFAULT_CLOSE_UTC_TIME, price_available_at, to_utc_timestamp
 from .delisting import MISSING_DELISTING_RETURN_BIAS
 from .pit_prices import DIVIDEND, SPLIT, CorporateAction, action_factor
+from .action_validation import validated_action_factors
 
 RESEARCH_WINDOW_START = "2007-01-01"
 RESEARCH_WINDOW_END = "2026-09-25"
@@ -581,23 +582,36 @@ def _shift_day(day, days):
     return stamp.strftime("%Y-%m-%d")
 
 
-def _cumulative_action_factors(actions, raw_by_date):
-    """Cumulative back-adjustment factor at each action's effective date.
+def _close_lookup_from(raw_by_date):
+    """Raw close on/before a day, as a callable ``validated_action_factors`` expects."""
+    if not raw_by_date:
+        return lambda day: None
+    days = sorted(str(day)[:10] for day in raw_by_date)
 
-    A factor that is ``None`` OR non-positive is DROPPED (not fabricated): a
-    non-positive dividend factor (amount >= close, e.g. a spinoff or a vendor
-    error) would otherwise zero the cumulative factor and corrupt every earlier
-    point-in-time price.
+    def lookup(day):
+        position = bisect.bisect_right(days, str(day)[:10]) - 1
+        return raw_by_date[days[position]] if position >= 0 else None
+
+    return lookup
+
+
+def _cumulative_action_factors(actions, raw_by_date):
+    """Cumulative back-adjustment factor at each VALIDATED action's effective date.
+
+    Routing every action through :func:`action_validation.validated_action_factors`
+    means identical rows are de-duplicated, a mis-typed or unresolvable dividend is
+    skipped, an evidence-backed ``/100`` unit correction is applied, and an
+    economically impossible dividend factor (amount ~= close) is refused -- so no
+    invalid action silently compounds into every earlier point-in-time price. The
+    per-action verdicts are returned as ``dropped`` evidence (never discarded
+    silently).
     """
+    lookup = _close_lookup_from(raw_by_date)
+    prepared, dropped = validated_action_factors(actions, lookup)
     dates, cums, cumulative = [], [], 1.0
-    dropped = []
-    for action in actions:
-        factor = action_factor(action, raw_by_date)
-        if factor is not None and factor > 0.0:
-            cumulative *= factor
-        else:
-            dropped.append({"kind": action.kind, "effective_date": action.effective_date})
-        dates.append(action.effective_date)
+    for day, factor in prepared:
+        cumulative *= factor
+        dates.append(day)
         cums.append(cumulative)
     return dates, cums, dropped
 

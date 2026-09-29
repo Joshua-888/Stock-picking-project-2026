@@ -47,6 +47,7 @@ import numpy as np
 import pandas as pd
 
 from ..data import pit_prices
+from ..data.action_validation import validated_action_factors
 from .matching import match_target_window_keys
 
 TARGET_COLUMNS = (
@@ -150,27 +151,31 @@ class _Series:
 
 
 def _precompute_actions(actions, day_values, close_values):
-    """Return ``[(effective_day_int, factor)]`` for the actions known at build time.
+    """Return ``[(effective_day_int, factor)]`` for the VALIDATED actions in force.
 
-    The factor mirrors :func:`pit_prices.action_factor`; a dividend whose ex-date
-    close is unknown is skipped rather than assigned an invented value.
+    The factor is produced by the single shared correction path
+    :func:`action_validation.validated_action_factors`, which de-duplicates
+    identical rows, skips a mis-typed/unresolvable dividend, applies the
+    evidence-backed ``/100`` unit correction, and refuses an economically
+    impossible dividend factor. The output stays ``(YYYYMMDD int, factor)`` so
+    :meth:`_Series.return_between` is byte-identical to
+    :func:`pit_prices.pit_return` on the same validated actions.
     """
-    prepared = []
-    for action in actions or []:
-        effective = _day_int(getattr(action, "effective_date", None))
+    def close_lookup(day_text):
+        target = _day_int(day_text)
+        if target is None:
+            return None
+        return _close_on_or_before(day_values, close_values, target)
+
+    prepared, _dropped = validated_action_factors(actions or [], close_lookup)
+    factors = []
+    for day_text, factor in prepared:
+        effective = _day_int(day_text)
         if effective is None:
             continue
-        if action.kind == pit_prices.SPLIT:
-            if not action.numerator or not action.denominator:
-                continue
-            prepared.append((effective, float(action.denominator) / float(action.numerator)))
-        elif action.kind == pit_prices.DIVIDEND:
-            close_on_ex = _close_on_or_before(day_values, close_values, effective)
-            if close_on_ex in (None, 0.0):
-                continue
-            prepared.append((effective, (close_on_ex - float(action.amount)) / close_on_ex))
-    prepared.sort(key=lambda item: item[0])
-    return prepared
+        factors.append((effective, float(factor)))
+    factors.sort(key=lambda item: item[0])
+    return factors
 
 
 def _actions_by_ticker(actions):
