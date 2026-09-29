@@ -37,11 +37,13 @@ from src.research.data import layers
 from src.research.data import provenance_ledger
 from src.research.data import wp2b_eodhd as wp2b
 from src.research.data.action_validation import UNRESOLVED, validated_action_factors
-from src.research.data.manifesting import build_and_persist_gold
+from src.research.data.manifesting import build_gold_manifest
 from src.research.data.survivorship_guard import run_guardrails
 from src.research.data.universe import UniverseMembership, UniverseTable
 from src.research.fingerprints import fingerprint_dataframe
-from src.research.modes import ResearchMode, current_git_commit
+from src.research.ids import canonical_json
+from src.research.immutability import ImmutabilityError, write_json_atomic
+from src.research.modes import ResearchMode, assert_no_synthetic_in_research, current_git_commit
 
 BRONZE_ROOT = ROOT / "data" / "research_v2"
 PROVENANCE_ROOT = ROOT / "provenance"
@@ -65,6 +67,19 @@ def _load_finalize():
 def write_canonical(path, payload):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+
+
+def _strip_created_at(manifest):
+    """Manifest content without the volatile wall-clock ``created_at``.
+
+    Mirrors ``provenance_ledger``'s write-once policy: re-certifying identical
+    research content (same deterministic dataset_id) yields a new timestamp, so
+    the timestamp must not participate in the immutability equality check while
+    every other field stays strictly immutable.
+    """
+    content = dict(manifest)
+    content.pop("created_at", None)
+    return content
 
 
 def archive_prior_sidecars():
@@ -234,14 +249,20 @@ def main(argv=None):
         "unit correction applied where the raw value is ~100x a plausible dividend",
     ]
 
-    persisted = build_and_persist_gold(
+    assert_no_synthetic_in_research(ResearchMode.RESEARCH_V2, False, context="corrective gold dataset %s" % GOLD_PANEL)
+    table = layers.write_gold_table(BRONZE_ROOT, GOLD_PANEL, panel, meta={"universe_id": wp2b.UNIVERSE_ID})
+    dataset_fingerprint = table["fingerprint"]
+    merged_sources = dict(source_fingerprints)
+    merged_sources["gold_table:%s" % GOLD_PANEL] = dataset_fingerprint
+    manifest_obj = build_gold_manifest(
         GOLD_PANEL, panel,
         mode=ResearchMode.RESEARCH_V2,
         universe_id=wp2b.UNIVERSE_ID,
         period_start=wp2b.RESEARCH_WINDOW_START,
         period_end=wp2b.RESEARCH_WINDOW_END,
         sources=["EODHD", "WIKIPEDIA_SP500"],
-        source_fingerprints=source_fingerprints,
+        source_fingerprints=merged_sources,
+        dataset_fingerprint=dataset_fingerprint,
         pit_status="partially_point_in_time",
         synthetic=False,
         known_limitations=limitations,
@@ -252,7 +273,15 @@ def main(argv=None):
         universe_version=universe["universe_version"],
         censoring_statistics=censoring,
     )
-    manifest = persisted["manifest"]
+    manifest = manifest_obj.to_dict()
+    manifest_path = layers.layer_root(BRONZE_ROOT, "gold", GOLD_PANEL) / ("%s.manifest.json" % manifest["dataset_id"])
+    if manifest_path.exists():
+        existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if canonical_json(_strip_created_at(existing)) != canonical_json(_strip_created_at(manifest)):
+            raise ImmutabilityError("gold manifest %s already exists with different content; refusing to overwrite" % manifest_path)
+        manifest = existing
+    else:
+        write_json_atomic(manifest_path, manifest)
     ledger = provenance_ledger.persist_manifest(manifest, root=PROVENANCE_ROOT, extra={
         "build_script": "scripts/research_v2/wp2b_build_live_dataset.py",
         "finalize_script": "scripts/research_v2/wp2c_corrective_finalize.py",
