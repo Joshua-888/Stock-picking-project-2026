@@ -69,17 +69,49 @@ def write_canonical(path, payload):
     path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
 
 
-def _strip_created_at(manifest):
-    """Manifest content without the volatile wall-clock ``created_at``.
+# Run-identity metadata that is NOT part of the research content and therefore
+# must not force a rewrite of an already-persisted gold manifest when the
+# deterministic content is unchanged. ``created_at`` is wall-clock; ``git_commit``
+# and ``branch`` identify the run, not the data. A differing value in ANY other
+# field still raises, so a genuine content change can never be masked.
+RUN_IDENTITY_FIELDS = ("created_at", "git_commit", "branch")
+
+
+def _strip_run_identity(manifest):
+    """Manifest content without run-identity metadata (see RUN_IDENTITY_FIELDS).
 
     Mirrors ``provenance_ledger``'s write-once policy: re-certifying identical
-    research content (same deterministic dataset_id) yields a new timestamp, so
-    the timestamp must not participate in the immutability equality check while
-    every other field stays strictly immutable.
+    research content (same deterministic dataset_id + dataset_fingerprint)
+    yields a new timestamp/commit, so those fields must not participate in the
+    immutability equality check while every research field stays immutable. The
+    FIRST commit that produced the identical content is retained as producer.
     """
     content = dict(manifest)
-    content.pop("created_at", None)
+    for field in RUN_IDENTITY_FIELDS:
+        content.pop(field, None)
     return content
+
+
+def persist_gold_manifest_idempotent(manifest, manifest_path):
+    """Write-once a gold manifest, tolerating only run-identity differences.
+
+    Returns ``(manifest, outcome)`` where ``outcome`` is ``"written"`` for a new
+    artefact or ``"verify_and_reuse"`` when an existing manifest already holds
+    the same research content. The existing manifest (and thus its original
+    producing commit) is reused verbatim in that case; a differing research field
+    raises :class:`ImmutabilityError` and leaves the original untouched.
+    """
+    if manifest_path.exists():
+        existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if canonical_json(_strip_run_identity(existing)) != canonical_json(_strip_run_identity(manifest)):
+            raise ImmutabilityError(
+                "gold manifest %s already exists with different research content; refusing to overwrite" % manifest_path)
+        if existing.get("dataset_fingerprint") != manifest.get("dataset_fingerprint"):
+            raise ImmutabilityError(
+                "gold manifest %s fingerprint mismatch; refusing to reuse" % manifest_path)
+        return existing, "verify_and_reuse"
+    write_json_atomic(manifest_path, manifest)
+    return manifest, "written"
 
 
 def archive_prior_sidecars():
@@ -273,15 +305,8 @@ def main(argv=None):
         universe_version=universe["universe_version"],
         censoring_statistics=censoring,
     )
-    manifest = manifest_obj.to_dict()
-    manifest_path = layers.layer_root(BRONZE_ROOT, "gold", GOLD_PANEL) / ("%s.manifest.json" % manifest["dataset_id"])
-    if manifest_path.exists():
-        existing = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if canonical_json(_strip_created_at(existing)) != canonical_json(_strip_created_at(manifest)):
-            raise ImmutabilityError("gold manifest %s already exists with different content; refusing to overwrite" % manifest_path)
-        manifest = existing
-    else:
-        write_json_atomic(manifest_path, manifest)
+    manifest_path = layers.layer_root(BRONZE_ROOT, "gold", GOLD_PANEL) / ("%s.manifest.json" % manifest_obj.dataset_id)
+    manifest, manifest_outcome = persist_gold_manifest_idempotent(manifest_obj.to_dict(), manifest_path)
     ledger = provenance_ledger.persist_manifest(manifest, root=PROVENANCE_ROOT, extra={
         "build_script": "scripts/research_v2/wp2b_build_live_dataset.py",
         "finalize_script": "scripts/research_v2/wp2c_corrective_finalize.py",
