@@ -192,7 +192,10 @@ def build_comparison(result):
     new_mod = result["composite"]
 
     def components_map(diag):
-        return {row["variable"]: row for row in diag["components"]}
+        components = diag["components"]
+        if isinstance(components, pd.DataFrame):
+            components = components.to_dict("records")
+        return {row["variable"]: row for row in components}
 
     old_c = components_map(old_diag)
     new_c = components_map(new_diag)
