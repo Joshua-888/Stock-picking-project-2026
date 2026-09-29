@@ -99,16 +99,16 @@ def test_committed_holdout_artifact_is_content_addressed():
     assert record["holdout_id"] == entry["holdout_id"]
     recomputed = holdout_id({k: v for k, v in record.items() if k != "holdout_id"})
     assert recomputed == record["holdout_id"]
-    # The upstream bindings must reference the certified artefacts.
-    assert record["dataset_id"] == "dataset_dbaa77445b38"
-    assert record["target_id"] == "target_set_888f68d1cfd0"
-    assert record["feature_set_id"] == "feature_set_56361533cc1b"
+    # The upstream bindings must reference the CORRECTED (WP2C/WP3) artefacts.
+    assert record["dataset_id"] == "dataset_35a278e17c13"
+    assert record["target_id"] == "target_set_d2bb16610bce"
+    assert record["feature_set_id"] == "feature_set_4f7b43726310"
     assert record["holdout_start"] == DEFAULT_HOLDOUT_START
 
 
 def test_locked_holdout_accessor_is_live_independent(tmp_path):
     holdout = locked_holdout()
-    assert holdout.holdout_id == "holdout_e1a63def9749"
+    assert holdout.holdout_id == "holdout_7ce54e933e16"
     assert str(holdout.holdout_start.date()) == "2022-01-01"
     assert str(holdout.holdout_end.date()) == "2025-08-31"
     assert holdout.embargo_months == DEFAULT_EMBARGO_MONTHS

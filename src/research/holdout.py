@@ -186,6 +186,31 @@ def _read_index(provenance_dir):
         raise HoldoutError("locked-holdout index is not valid JSON: %s" % exc) from exc
 
 
+def _resolve_canonical_entry(index):
+    """Deterministically resolve the CANONICAL holdout entry from the index.
+
+    Resolution is by id, never by filename ordering: ``canonical_holdout_id``
+    takes precedence, and any entry flagged ``status == "superseded"`` is
+    refused. This keeps the corrected-bound holdout canonical after a rebind
+    while the original record stays on disk as historical evidence.
+    """
+    entries = index.get("entries")
+    canonical_id = index.get("canonical_holdout_id")
+    if canonical_id and isinstance(entries, dict) and canonical_id in entries:
+        entry = dict(entries[canonical_id])
+        entry["holdout_id"] = entry.get("holdout_id", canonical_id)
+        entry.setdefault("artifact_file", "%s.json" % canonical_id)
+    else:
+        # Legacy index shape (single "holdout" entry).
+        entry = dict(index.get("holdout") or {})
+    if str(entry.get("status") or "").lower() == "superseded":
+        raise HoldoutError(
+            "resolved locked holdout %r is marked superseded and must not be used"
+            % entry.get("holdout_id")
+        )
+    return entry
+
+
 def locked_holdout(provenance_dir=None):
     """Load and verify the frozen locked holdout (live-independent, deterministic).
 
@@ -195,7 +220,7 @@ def locked_holdout(provenance_dir=None):
     """
     provenance_dir = Path(provenance_dir) if provenance_dir is not None else default_provenance_dir()
     index = _read_index(provenance_dir)
-    entry = index.get("holdout") or {}
+    entry = _resolve_canonical_entry(index)
     record_id = entry.get("holdout_id")
     file_name = entry.get("artifact_file")
     if not record_id or not file_name:
@@ -216,6 +241,58 @@ def locked_holdout(provenance_dir=None):
             % (record_id, recomputed)
         )
     return LockedHoldout(record=record)
+
+
+def canonical_holdout_id(provenance_dir=None):
+    """Deterministic id of the canonical locked holdout (no filename ordering).
+
+    Prefers the index's ``canonical_holdout_id``; falls back to the legacy
+    single ``holdout`` entry. Never returns a superseded binding.
+    """
+    provenance_dir = Path(provenance_dir) if provenance_dir is not None else default_provenance_dir()
+    index = _read_index(provenance_dir)
+    entry = _resolve_canonical_entry(index)
+    record_id = entry.get("holdout_id")
+    if not record_id:
+        raise HoldoutError("locked-holdout index has no canonical holdout_id")
+    return record_id
+
+
+def resolve_holdout_id(holdout_id, provenance_dir=None):
+    """Map any holdout id to the current canonical id via the rebinding chain.
+
+    A frozen experiment may still literally record an id that has since been
+    superseded (only its upstream-id binding was stale). This resolves that
+    reference deterministically to the canonical successor. Unknown ids that
+    are not registered in the index are rejected rather than silently accepted.
+    """
+    provenance_dir = Path(provenance_dir) if provenance_dir is not None else default_provenance_dir()
+    index = _read_index(provenance_dir)
+    canonical = canonical_holdout_id(provenance_dir)
+    entries = index.get("entries")
+    if not isinstance(entries, dict):
+        # Legacy index shape: only the canonical holdout is registered.
+        legacy = (index.get("holdout") or {}).get("holdout_id")
+        if holdout_id != legacy:
+            raise HoldoutError("unknown locked-holdout id %r" % (holdout_id,))
+        return canonical
+    if holdout_id not in entries:
+        raise HoldoutError("unknown locked-holdout id %r" % (holdout_id,))
+    seen = set()
+    current = holdout_id
+    while True:
+        if current in seen:
+            raise HoldoutError("cyclic locked-holdout supersession chain at %r" % (current,))
+        seen.add(current)
+        entry = entries.get(current)
+        if entry is None:
+            raise HoldoutError("locked-holdout supersession references unregistered id %r" % (current,))
+        if str(entry.get("status") or "").lower() != "superseded":
+            return current
+        nxt = entry.get("superseded_by")
+        if not nxt:
+            raise HoldoutError("superseded locked holdout %r has no superseded_by" % (current,))
+        current = nxt
 
 
 # ── Temporal access control ──────────────────────────────────────────────────
