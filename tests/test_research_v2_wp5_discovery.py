@@ -621,7 +621,8 @@ def _corrective_experiment_id():
 
 def _corrective_prov():
     new_id = _corrective_experiment_id()
-    return new_id, _load_json(CORRECTIONS_DIR / ("%s.json" % new_id))
+    # The full experiment provenance record carries the holdout/mode bindings.
+    return new_id, _load_json(REPO_ROOT / "provenance" / "wp5" / new_id / ("%s.json" % new_id))
 
 
 def _git(*args):
