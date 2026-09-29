@@ -1,0 +1,58 @@
+{
+  "branch": "feat/v2-wp2b-universe-delisted-unblock",
+  "candidate_count": 23,
+  "canonical_holdout_id": "holdout_7ce54e933e16",
+  "certification_schema": "wp5_certification_v1",
+  "certified_at": "2026-09-29T23:00:00+02:00",
+  "classification_counts": {
+    "DEFER": 1,
+    "DIRECTION_UNSTABLE": 2,
+    "LOW_COVERAGE": 10,
+    "NO_CLEAR_SIGNAL": 0,
+    "PROMISING_BUT_UNSTABLE": 0,
+    "REDUNDANT": 10,
+    "ROBUST_CANDIDATE": 0,
+    "TEMPORALLY_UNSAFE": 0
+  },
+  "corrected_from_experiment_id": "experiment_902a843c7ec6",
+  "corrected_wp4_experiment_id": "experiment_834a7e60f13c",
+  "dataset_id": "dataset_35a278e17c13",
+  "experiment_id": "experiment_f985287c1315",
+  "fdr": {
+    "alpha": 0.05,
+    "hypotheses": 23,
+    "method": "benjamini_hochberg",
+    "rejected": 0
+  },
+  "feature_set_id": "feature_set_4f7b43726310",
+  "holdout_binding_correction": "provenance/wp5/experiment_f985287c1315/holdout_binding_correction.json",
+  "known_limitations": [
+    "No EODHD delisting returns: terminal outcomes are right-censored, never fabricated",
+    "abnormal_volume UNAVAILABLE (certified PIT price table has no volume column)",
+    "SEC EDGAR companyfacts begin ~2009 so early fundamental coverage is bounded",
+    "~11.8x overlapping 12-month labels: monthly cross-sectional IC + HAC used as primary inference",
+    "0 ROBUST_CANDIDATE: discovery found no feature surviving BH-FDR; this is the honest result, not a tuned outcome"
+  ],
+  "panel_version": "553ac17bf5d4d63f",
+  "producing_code_commit": "6bd31b760a5cdee25a0beaf0b708859d34cb4517",
+  "robust_candidate_count": 0,
+  "status": "WP5_COMPLETE",
+  "superseded_holdout_id": "holdout_e1a63def9749",
+  "target_id": "target_set_d2bb16610bce",
+  "target_version": "56d0f670bdf1b47c",
+  "verdicts": {
+    "data_integrity_engineer": "RESEARCH_READY_WITH_LIMITATIONS",
+    "quant_auditor": {
+      "audit_id": "AUDIT_WP5_R2",
+      "hard_defects": 0,
+      "material_defects": 0,
+      "verdict": "AUDIT_PASS"
+    },
+    "research_ops_engineer": "REPRODUCIBLE",
+    "variable_discovery_scientist": "VDS_WP5_PASS",
+    "walk_forward_validator": {
+      "initial": "WFV_WP5_CONCERNS",
+      "remediation": "WFV_HOLDOUT_REBOUND"
+    }
+  }
+}
