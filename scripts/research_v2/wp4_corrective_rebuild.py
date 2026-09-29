@@ -44,6 +44,7 @@ from src.research.keyes import (
     DIAGNOSTIC_VERSION,
     SIGNAL_VERSION,
     CompositeConfig,
+    ComputationConfig,
 )
 
 CORR_DIR = ROOT / "artifacts" / "research" / "wp5_correction" / "wp4_corrective"
