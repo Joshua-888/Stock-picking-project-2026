@@ -4,9 +4,13 @@ WP6's first provenance record was frozen with an incorrect producing-code
 commit: the record for ``experiment_05ddc3721b4a`` binds
 ``git_commit = 8751c164b8c504628a2b9122e41397cf41f71276``, a commit that does
 NOT contain the WP6 producing code (``src/research/modeling/`` and
-``scripts/research_v2/wp6_model_research.py``). The canonical producing commit
-is ``89aadecf304d789b00daf13983641847b4a7d3bd`` under the content-addressed
-experiment id ``experiment_f7864f37998f``.
+``scripts/research_v2/wp6_model_research.py``). A corrective rerun produced
+the content-addressed experiment id ``experiment_d6eda4a491ca`` whose
+deterministically verified producing commit is
+``1bbfed0c9a58bf1958926a67e33f5fa5f944215d``. The earlier
+experiment ``experiment_f7864f37998f`` is withdrawn and superseded, and
+experiment ``experiment_05ddc3721b4a`` is withdrawn/misbound; both historical
+records remain byte-unchanged.
 
 Write-once immutability correctly refuses to overwrite the frozen misbound
 record, so the correction lives in NEW artefacts plus a machine-readable index
@@ -15,8 +19,8 @@ pattern).
 
 This module resolves a WP6 experiment to its canonical provenance
 *d-deterministically* (by experiment id, never by filename ordering) and exposes
-the withdrawn, non-canonical status of the misbound record so it can never be
-selected as canonical by downstream tooling.
+the withdrawn, non-canonical status of the misbound and superseded records so
+they can never be selected as canonical by downstream tooling.
 
 It records and protects provenance; it performs no data selection, no feature
 engineering, no model fitting and no scoring.
