@@ -1,0 +1,11 @@
+{
+  "dataset_id": "dataset_35a278e17c13",
+  "experiment_id": "experiment_05ddc3721b4a",
+  "feature_set_id": "feature_set_4f7b43726310",
+  "git_commit": "8751c164b8c504628a2b9122e41397cf41f71276",
+  "holdout_id": "holdout_7ce54e933e16",
+  "panel_version": "553ac17bf5d4d63f",
+  "target_id": "target_set_d2bb16610bce",
+  "target_version": "56d0f670bdf1b47c",
+  "wp": "wp6"
+}
