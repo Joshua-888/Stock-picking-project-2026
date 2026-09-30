@@ -1,0 +1,12 @@
+{
+  "corrective_contract_version": "v2_wp6_model_research_v2_corrective",
+  "dataset_id": "dataset_35a278e17c13",
+  "experiment_id": "experiment_d6eda4a491ca",
+  "feature_set_id": "feature_set_4f7b43726310",
+  "git_commit": "1bbfed0c9a58bf1958926a67e33f5fa5f944215d",
+  "holdout_id": "holdout_7ce54e933e16",
+  "panel_version": "553ac17bf5d4d63f",
+  "target_id": "target_set_d2bb16610bce",
+  "target_version": "56d0f670bdf1b47c",
+  "wp": "wp6"
+}
