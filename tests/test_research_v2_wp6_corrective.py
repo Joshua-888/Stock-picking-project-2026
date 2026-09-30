@@ -11,6 +11,7 @@ Synthetic fixtures only; no research data and no network are touched.
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 from pathlib import Path
 import sys
@@ -161,6 +162,36 @@ def test_classification_inference_subtracts_half():
     regression = pd.DataFrame({"month": ["2020-%02d" % (index + 1) for index in range(12)],
                                "rank_ic": [0.04] * 12})
     assert abs(monthly_significance(regression, column="rank_ic")["skill_mean"] - 0.04) < 1e-12
+
+
+def test_primary_skill_value_regression_and_classification():
+    assert abs(runner.primary_skill_value("regression", 0.04) - 0.04) < 1e-12
+    assert abs(runner.primary_skill_value("classification", 0.6) - 0.1) < 1e-12
+    assert runner.primary_skill_value("classification", None) is None
+
+
+def test_classification_stability_gate_is_auc_skill_centered():
+    # Raw-AUC logic would see all folds above 0.5 and report stable; the frozen
+    # gate must center each value at 0.5, making two folds below-skill and the
+    # configuration UNSTABLE.
+    pooled = {"months": 48, "mean_metric": 0.525, "hac": {"p_value": 0.001}}
+    fold_metrics = [{"mean_metric": 0.60}, {"mean_metric": 0.60},
+                    {"mean_metric": 0.45}, {"mean_metric": 0.45}]
+    baseline = {"mean_metric": 0.5}
+    controls = {"stop": False, "affected_tasks": []}
+    category = runner.classify_configuration(fold_metrics, pooled, baseline, controls,
+                                             True, True, "classification", config=DEFAULT_CONFIG)
+    assert category == "UNSTABLE"
+
+
+def test_committed_script_registration_supersedes_withdrawn_experiment():
+    script_path = REPO_ROOT / "scripts" / "research_v2" / "wp6_model_research.py"
+    spec = importlib.util.spec_from_file_location("_wp6_corrective_script_under_test", script_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    registration = module._legacy_wp6_registration("experiment_test")
+    assert registration["supersedes"] is not None
+    assert registration["supersedes"] == "experiment_f7864f37998f"
 
 
 # ── Defect #3: explicit PASS / FAIL / STOP ───────────────────────────────────

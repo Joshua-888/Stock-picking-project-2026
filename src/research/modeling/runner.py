@@ -125,6 +125,17 @@ def classification_spec_name(spec_name, task):
     return spec_name if task == "regression" else spec_name + "__clf"
 
 
+def primary_skill_value(task, value):
+    """Convert a primary metric to its frozen inference skill scale.
+
+    Classification AUC is centered at its chance null (AUC - 0.5), while
+    regression IC already has a zero null and is used unchanged.
+    """
+    if value is None:
+        return None
+    return float(value) - 0.5 if task == "classification" else float(value)
+
+
 # ── Frozen category rules (defect #9: PROMISING requires ALL gates) ───────────
 
 def classify_configuration(fold_metrics, pooled_summary, baseline_summary, controls_summary,
@@ -148,16 +159,19 @@ def classify_configuration(fold_metrics, pooled_summary, baseline_summary, contr
     fold_values = [item.get("mean_metric") for item in fold_metrics if item.get("mean_metric") is not None]
     if len(fold_values) < 2:
         return "NO_EVIDENCE"
-    if abs(mean_metric) < config.no_evidence_ic_floor:
+    skill_mean = primary_skill_value(task, mean_metric)
+    fold_skills = [primary_skill_value(task, value) for value in fold_values]
+    if abs(skill_mean) < config.no_evidence_ic_floor:
         return "NO_EVIDENCE"
-    direction_positive = mean_metric > 0.0
+    direction_positive = skill_mean > 0.0
     agreement = float(np.mean([1.0 if ((value > 0.0) == direction_positive) else 0.0
-                               for value in fold_values]))
+                               for value in fold_skills]))
     if agreement < config.fold_positive_fraction:
         return "UNSTABLE"
     beats_baseline = False
     if baseline_summary is not None and baseline_summary.get("mean_metric") is not None:
-        beats_baseline = bool(mean_metric > baseline_summary["mean_metric"])
+        baseline_skill = primary_skill_value(task, baseline_summary["mean_metric"])
+        beats_baseline = bool(skill_mean > baseline_skill)
     hac_p = ((pooled_summary or {}).get("hac") or {}).get("p_value")
     significant = hac_p is not None and hac_p < config.alpha
     if (direction_positive and beats_baseline and significant
@@ -333,10 +347,12 @@ def build_controls(frame, fold_frames, folds, config, seed, records_by_id, confi
     shuffled_clf = _shuffled_target_metric(fold_frames, folds, model_registry.MODELS_BY_NAME["logistic"],
                                            {"C": 1.0}, "classification", features, config, seed)
     controls.append(evaluate_metric_control(
-        "shuffled_target_classification", "shuffled_target", real_clf, shuffled_clf, real_clf_id,
+        "shuffled_target_classification", "shuffled_target",
+        primary_skill_value("classification", real_clf),
+        primary_skill_value("classification", shuffled_clf), real_clf_id,
         PLACEBO_FLOOR,
-        "a classifier trained on a within-date shuffled TRAIN label scores near chance (AUC ~ 0.5)",
-        "shuffled-target mean AUC magnitude = %.6f", affected_tasks=("classification",)))
+        "a classifier trained on a within-date shuffled TRAIN label scores near chance (AUC skill ~ 0)",
+        "shuffled-target mean AUC skill (AUC - 0.5) magnitude = %.6f", affected_tasks=("classification",)))
 
     # 3) noise-feature control (matched to the predeclared real regression model).
     from ..discovery.placebo import noise_feature as _noise_feature

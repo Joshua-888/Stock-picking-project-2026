@@ -366,7 +366,7 @@ def _legacy_wp6_registration(experiment):
         "schema_version": "wp6_model_research_corrective_registration_v2",
         "experiment_id": experiment,
         "corrective_contract_version": WP6_CORRECTIVE_CONTRACT_VERSION,
-        "supersedes": None,
+        "supersedes": WITHDRAWN_WP6_EXPERIMENT_ID,
         "note": "WP6 corrective rerun; the withdrawn experiment %s and misbound %s are preserved"
                 % (WITHDRAWN_WP6_EXPERIMENT_ID, MISBOUND_WP6_EXPERIMENT_ID),
     }
