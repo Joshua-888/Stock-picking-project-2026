@@ -1,9 +1,18 @@
-"""WP6 inference over the MONTHLY metric series.
+"""WP6 inference over the MONTHLY metric series with correct metric nulls.
 
-This module reuses the WP5 dependence-aware instruments
-(:func:`src.research.discovery.inference.hac_mean_test` and
-:func:`~src.research.discovery.inference.block_bootstrap_mean`) and adds paired
-monthly model comparisons. HAC/Newey-West is the PRIMARY instrument; the circular
+Corrective defect #2. The core metrics have DIFFERENT null hypotheses and each
+metric therefore declares an explicit comparator:
+
+* cross-sectional Spearman IC (regression): ``H0: mean(IC_t) = 0``.
+* ROC-AUC (classification): ``H0: mean(AUC_t - 0.5) = 0``. Inference is performed
+  on the AUC SKILL series ``AUC_t - 0.5`` (the v1 code tested AUC against 0.0,
+  which is meaningless because AUC is ~0.5 under no signal).
+* PR-AUC: comparator = frozen base prevalence (never zero).
+* Accuracy: comparator = base rate (never zero).
+* Brier: comparator = frozen base-rate Brier benchmark ``mean((b - y)^2)``.
+* Log loss: comparator = frozen base-rate log loss ``-mean(y ln b + (1-y) ln(1-b))``.
+
+HAC/Newey-West is the PRIMARY instrument (with an explicit null mean); the circular
 block bootstrap is SECONDARY. No pooled-row IID significance claim is ever made.
 """
 
@@ -12,7 +21,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ..discovery.inference import block_bootstrap_mean, hac_mean_test, iid_mean_test
+from ..discovery.inference import _normal_sf, block_bootstrap_mean, hac_standard_error, iid_mean_test
 from .contract import DEFAULT_CONFIG
 
 
@@ -20,27 +29,112 @@ class InferenceRequestError(RuntimeError):
     """Raised when an inference request is ill-formed."""
 
 
+# ── Explicit comparator / null definition per metric (defect #2) ──────────────
+
+METRIC_DEFINITIONS = {
+    "rank_ic": {"null_mean": 0.0, "skill_transform": "identity",
+                "null": "H0: mean(IC_t) = 0",
+                "comparator": "zero"},
+    "auc": {"null_mean": 0.5, "skill_transform": "subtract_0.5",
+            "null": "H0: mean(AUC_t - 0.5) = 0",
+            "comparator": "0.5 (chance)"},
+    "pr_auc": {"null_mean": None, "skill_transform": "subtract_comparator",
+               "null": "H0: mean(PR-AUC_t - base_prevalence_t) = 0",
+               "comparator": "frozen base prevalence (per month)"},
+    "accuracy": {"null_mean": None, "skill_transform": "subtract_comparator",
+                 "null": "H0: mean(Accuracy_t - base_rate_t) = 0",
+                 "comparator": "base rate / frozen benchmark"},
+    "brier": {"null_mean": None, "skill_transform": "subtract_comparator",
+              "null": "H0: mean(Brier_t - base_rate_brier_t) = 0",
+              "comparator": "frozen base-rate Brier mean((b - y)^2)"},
+    "log_loss": {"null_mean": None, "skill_transform": "subtract_comparator",
+                 "null": "H0: mean(logloss_t - base_rate_logloss_t) = 0",
+                 "comparator": "frozen base-rate log loss -mean(y ln b + (1-y) ln(1-b))"},
+}
+
+
+def metric_null(metric):
+    """Return the explicit comparator/null definition for a metric."""
+    definition = METRIC_DEFINITIONS.get(str(metric))
+    if definition is None:
+        raise InferenceRequestError("unknown metric %r" % (metric,))
+    return definition
+
+
+def skill_series(values, metric, comparator=None):
+    """Transform a monthly metric series into its zero-null skill series.
+
+    * ``rank_ic`` : unchanged (null 0).
+    * ``auc``     : ``AUC_t - 0.5``.
+    * other metrics: subtract the per-observation comparator (caller supplies it).
+    """
+    arr = np.asarray(values, dtype="float64")
+    definition = metric_null(metric)
+    transform = definition["skill_transform"]
+    if transform == "identity":
+        return arr.copy()
+    if transform == "subtract_0.5":
+        return arr - 0.5
+    if comparator is None:
+        raise InferenceRequestError(
+            "metric %r requires an explicit per-observation comparator" % (metric,))
+    return arr - np.asarray(comparator, dtype="float64")
+
+
 def _clean(values):
     arr = np.asarray(values, dtype="float64")
     return arr[np.isfinite(arr)]
 
 
-def monthly_significance(series, config=None, column="rank_ic"):
-    """HAC (primary) plus block bootstrap (secondary) on a monthly metric series."""
+def hac_mean_test_against(values, null_mean=0.0, lags=12):
+    """HAC/Newey-West test that ``mean(values) == null_mean`` (PRIMARY)."""
+    arr = _clean(values)
+    n = len(arr)
+    if n < 2:
+        return {"n": n, "mean": None, "null_mean": float(null_mean), "hac_se": None,
+                "t_stat": None, "p_value": None}
+    centred = arr - float(null_mean)
+    mean = float(centred.mean())
+    se = hac_standard_error(centred, lags=lags)
+    if not se:
+        return {"n": n, "mean": float(arr.mean()), "null_mean": float(null_mean),
+                "hac_se": se, "t_stat": None, "p_value": None}
+    t_stat = mean / se
+    p_value = float(2.0 * _normal_sf(abs(t_stat)))
+    return {"n": n, "mean": float(arr.mean()), "null_mean": float(null_mean),
+            "skill_mean": mean, "hac_se": float(se), "t_stat": float(t_stat),
+            "p_value": p_value}
+
+
+def monthly_significance(series, config=None, column="rank_ic", metric=None, comparator=None):
+    """HAC (primary) plus block bootstrap (secondary) with the correct null.
+
+    ``metric`` selects the declared null/comparator. When omitted it is inferred
+    from ``column`` (``rank_ic`` -> IC null, ``auc`` -> AUC-skill null). Inference
+    is ALWAYS run on the skill series, whose null mean is exactly zero.
+    """
     config = config or DEFAULT_CONFIG
+    metric = metric or ("auc" if column == "auc" else "rank_ic")
+    definition = metric_null(metric)
     if series is None or len(series) == 0:
-        return {"n": 0, "mean": None, "hac": None, "bootstrap": None, "iid_contrast": None}
-    values = _clean(series[column].to_numpy(dtype="float64"))
-    if len(values) < 2:
-        return {"n": int(len(values)), "mean": float(values.mean()) if len(values) else None,
+        return {"n": 0, "mean": None, "skill_mean": None, "null_mean": 0.0,
+                "metric": metric, "null": definition["null"], "comparator": definition["comparator"],
                 "hac": None, "bootstrap": None, "iid_contrast": None}
-    hac = hac_mean_test(values, lags=int(config.hac_lags))
-    bootstrap = block_bootstrap_mean(values, block=int(config.bootstrap_block),
+    raw = _clean(series[column].to_numpy(dtype="float64"))
+    if len(raw) < 2:
+        return {"n": int(len(raw)), "mean": float(raw.mean()) if len(raw) else None,
+                "skill_mean": None, "null_mean": 0.0, "metric": metric,
+                "null": definition["null"], "comparator": definition["comparator"],
+                "hac": None, "bootstrap": None, "iid_contrast": None}
+    skill = skill_series(raw, metric, comparator=comparator)
+    hac = hac_mean_test_against(skill, null_mean=0.0, lags=int(config.hac_lags))
+    bootstrap = block_bootstrap_mean(skill, block=int(config.bootstrap_block),
                                      iterations=int(config.bootstrap_iterations),
                                      seed=int(config.bootstrap_seed))
-    return {"n": int(len(values)), "mean": float(values.mean()), "hac": hac,
-            "bootstrap": bootstrap,
-            "iid_contrast": iid_mean_test(values)}
+    return {"n": int(len(raw)), "mean": float(raw.mean()), "skill_mean": float(skill.mean()),
+            "metric": metric, "null": definition["null"], "comparator": definition["comparator"],
+            "null_mean": 0.0, "hac": hac, "bootstrap": bootstrap,
+            "iid_contrast": iid_mean_test(skill)}
 
 
 def _aligned_series(left, right, column="rank_ic"):
@@ -59,8 +153,8 @@ def paired_monthly_comparison(left_series, right_series, config=None, column="ra
                               left_name="left", right_name="right"):
     """Paired monthly difference test between two models on the SAME months.
 
-    Returns the mean difference, its HAC p-value (primary), a bootstrap p-value
-    (secondary) and the fraction of shared months where ``left`` beats ``right``.
+    For AUC the shared ``-0.5`` shift cancels in the difference, so the null of the
+    difference is zero regardless of the metric.
     """
     config = config or DEFAULT_CONFIG
     left, right, months = _aligned_series(left_series, right_series, column=column)
@@ -69,7 +163,7 @@ def paired_monthly_comparison(left_series, right_series, config=None, column="ra
                 "mean_difference": None, "hac": None, "bootstrap": None,
                 "left_better_fraction": None}
     difference = left - right
-    hac = hac_mean_test(difference, lags=int(config.hac_lags))
+    hac = hac_mean_test_against(difference, null_mean=0.0, lags=int(config.hac_lags))
     bootstrap = block_bootstrap_mean(difference, block=int(config.bootstrap_block),
                                      iterations=int(config.bootstrap_iterations),
                                      seed=int(config.bootstrap_seed))
@@ -84,25 +178,3 @@ def paired_monthly_comparison(left_series, right_series, config=None, column="ra
         "mean_left": float(left.mean()),
         "mean_right": float(right.mean()),
     }
-
-
-def paired_across_folds(per_fold_series, left_name, right_name, config=None):
-    """Run the paired monthly comparison inside every fold that has both models."""
-    config = config or DEFAULT_CONFIG
-    records = []
-    differences = []
-    for fold in sorted(per_fold_series):
-        left = per_fold_series[fold].get(left_name)
-        right = per_fold_series[fold].get(right_name)
-        if left is None or right is None:
-            continue
-        comparison = paired_monthly_comparison(left, right, config=config,
-                                               left_name=left_name, right_name=right_name)
-        comparison["fold"] = fold
-        records.append(comparison)
-        if comparison["mean_difference"] is not None:
-            differences.append(comparison["mean_difference"])
-    pooled = None
-    if len(differences) >= 2:
-        pooled = hac_mean_test(np.asarray(differences, dtype="float64"), lags=min(int(config.hac_lags), len(differences) - 1))
-    return {"folds": records, "fold_level_difference_hac": pooled}

@@ -18,16 +18,20 @@ from dataclasses import asdict, dataclass, field
 from ..discovery.catalog import CATALOG_BY_NAME, FEATURE_NAMES
 
 # ── Version stamps (content-addressed into the experiment binding) ───────────
-WP6_CONTRACT_VERSION = "v2_wp6_model_research_v1"
-WP6_PANEL_VERSION = "v2_wp6_modeling_panel_v1"
-WP6_FOLDS_VERSION = "v2_wp6_walk_forward_folds_v1"
-WP6_PREPROCESSING_VERSION = "v2_wp6_preprocessing_v1"
-WP6_FEATURES_VERSION = "v2_wp6_feature_strategies_v1"
-WP6_MODELS_VERSION = "v2_wp6_model_registry_v1"
-WP6_METRICS_VERSION = "v2_wp6_metrics_v1"
-WP6_INFERENCE_VERSION = "v2_wp6_inference_v1"
-WP6_PLACEBO_VERSION = "v2_wp6_placebo_v1"
-WP6_RUNNER_VERSION = "v2_wp6_runner_v1"
+# Corrective defect #10: every WP6 module version string changes so the
+# content-addressed experiment id is NEW and can never overwrite the withdrawn
+# ``experiment_f7864f37998f`` / misbound ``experiment_05ddc3721b4a`` artifacts.
+WP6_CORRECTIVE_CONTRACT_VERSION = "v2_wp6_model_research_v2_corrective"
+WP6_CONTRACT_VERSION = "v2_wp6_model_research_v2_corrective"
+WP6_PANEL_VERSION = "v2_wp6_modeling_panel_v2_corrective"
+WP6_FOLDS_VERSION = "v2_wp6_walk_forward_folds_v2_corrective"
+WP6_PREPROCESSING_VERSION = "v2_wp6_preprocessing_v2_corrective"
+WP6_FEATURES_VERSION = "v2_wp6_feature_strategies_v2_corrective"
+WP6_MODELS_VERSION = "v2_wp6_model_registry_v2_corrective"
+WP6_METRICS_VERSION = "v2_wp6_metrics_v2_corrective"
+WP6_INFERENCE_VERSION = "v2_wp6_inference_v2_corrective"
+WP6_PLACEBO_VERSION = "v2_wp6_placebo_v2_corrective"
+WP6_RUNNER_VERSION = "v2_wp6_runner_v2_corrective"
 
 # ── Explicit, frozen feature exclusions ──────────────────────────────────────
 # These three candidates are REMOVED from the WP6 feature universe and must never
@@ -114,6 +118,7 @@ def contract_payload(config=None):
     config = config or DEFAULT_CONFIG
     universe = model_feature_universe()
     return {
+        "corrective_contract_version": WP6_CORRECTIVE_CONTRACT_VERSION,
         "contract_version": WP6_CONTRACT_VERSION,
         "panel_version": WP6_PANEL_VERSION,
         "folds_version": WP6_FOLDS_VERSION,

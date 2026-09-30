@@ -1,17 +1,28 @@
-"""WP6 DEVELOPMENT-PERIOD model research.
+"""WP6 DEVELOPMENT-PERIOD model research (WP6_CORRECTIVE_CONTRACT_V2).
 
-Loads the CERTIFIED WP5 inputs (panel ``dataset_35a278e17c13`` /
+Loads the CERTIFIED WP5 inputs (dataset ``dataset_35a278e17c13`` /
 ``553ac17bf5d4d63f``, target ``target_set_d2bb16610bce`` / ``56d0f670bdf1b47c``,
 feature set ``feature_set_4f7b43726310``), rebuilds the WP5 point-in-time feature
 panel through the EXACT WP5 engine, attaches the certified targets, restricts to
 development rows (``feature_asof < 2021-01-01``), builds deterministic walk-forward
 folds with a 12-month purge, enumerates the complete frozen model grid over the
-frozen feature strategies and preprocessing policies, and writes an immutable
-ledger plus metrics, feature-selection-per-fold records and placebos.
+frozen feature strategies and preprocessing policies, runs the matched negative
+controls and robustness checks, and writes an immutable ledger plus metrics.
+
+Corrective contract v2 changes (see ``docs/research_v2/wp6_corrective_contract_v2.md``):
+
+* every WP6 version string is bumped, so the content-addressed experiment id is NEW
+  and can never overwrite ``experiment_f7864f37998f`` / ``experiment_05ddc3721b4a``;
+* negative controls name a PREDECLARED matched real configuration by deterministic id
+  (no ``max(values, key=abs)`` reference anywhere);
+* classification inference runs on the AUC skill series ``AUC_t - 0.5``;
+* the future-availability guard is a REAL field-based check;
+* model-layer Benjamini-Hochberg FDR gates PROMISING;
+* robustness checks are EXECUTED and serialized.
 
 The locked holdout (``feature_asof >= 2022-01-01``) and its labels are NEVER read.
-No final production model is fitted. The script records measured evidence and
-issues no scientific verdict. Real data only; no synthetic fallback.
+No final production model is fitted. The script records measured evidence and issues
+no scientific verdict. Real data only; no synthetic fallback.
 """
 
 from __future__ import annotations
@@ -36,12 +47,16 @@ from src.research.ids import experiment_id
 from src.research.modes import ResearchMode, current_git_commit
 from src.research.modeling import models as model_registry
 from src.research.modeling import runner
-from src.research.modeling.contract import DEFAULT_CONFIG, contract_payload
+from src.research.modeling.contract import (
+    DEFAULT_CONFIG,
+    WP6_CORRECTIVE_CONTRACT_VERSION,
+    contract_payload,
+)
 from src.research.modeling.folds import build_folds
 from src.research.modeling.io import (
     modeling_payload,
-    write_experiment,
     write_canonical,
+    write_experiment,
 )
 from src.research.modeling.panel import build_modeling_panel
 
@@ -54,7 +69,12 @@ FEATURE_SET_ID = "feature_set_4f7b43726310"
 WP5_EXPERIMENT_ID = "experiment_f985287c1315"
 WP4_CORRECTIVE_EXPERIMENT_ID = "experiment_834a7e60f13c"
 
+# Withdrawn / misbound historical experiments that must never be overwritten.
+WITHDRAWN_WP6_EXPERIMENT_ID = "experiment_f7864f37998f"
+MISBOUND_WP6_EXPERIMENT_ID = "experiment_05ddc3721b4a"
+
 CORRECTED_WP4_DIR = ROOT / "artifacts" / "research" / "wp5_correction" / "wp4_corrective"
+OLD_EXPERIMENT_DIR = ROOT / "artifacts" / "research" / "wp6" / WITHDRAWN_WP6_EXPERIMENT_ID
 
 
 def _load_module(name, path):
@@ -68,12 +88,93 @@ def _wp5():
     return _load_module("wp5_discover_features", ROOT / "scripts" / "research_v2" / "wp5_discover_features.py")
 
 
+# ── Aggregation helpers (factual summaries; no ranking or verdict) ────────────
+
+def _count_categories(records, key=lambda record: record.get("research_category")):
+    counts = {}
+    for record in records:
+        value = key(record)
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _regression_summary(records):
+    summary = {}
+    for record in records:
+        pooled = record.get("pooled") or {}
+        summary[record["config_id"]] = {
+            "model": record["model"], "strategy": record["strategy"],
+            "params": record["params"], "family_id": record.get("family_id"),
+            "mean_ic": pooled.get("mean_ic"), "mean_metric": pooled.get("mean_metric"),
+            "icir": pooled.get("icir"), "null": pooled.get("null"),
+            "comparator": pooled.get("comparator"),
+            "hac_p_value": (pooled.get("hac") or {}).get("p_value"),
+            "hac_se": (pooled.get("hac") or {}).get("hac_se"),
+            "raw_p": record.get("raw_p"), "q_value": record.get("q_value"),
+            "fdr_rejected": record.get("fdr_rejected"),
+            "research_category": record.get("research_category"),
+        }
+    return summary
+
+
+def _classification_summary(records):
+    summary = {}
+    for record in records:
+        pooled = record.get("pooled") or {}
+        hac = pooled.get("hac") or {}
+        mean_auc = pooled.get("mean_metric")
+        summary[record["config_id"]] = {
+            "model": record["model"], "strategy": record["strategy"],
+            "params": record["params"], "family_id": record.get("family_id"),
+            "mean_auc": mean_auc,
+            "mean_skill_auc_minus_half": (None if mean_auc is None else float(mean_auc) - 0.5),
+            "skill_mean": hac.get("skill_mean"), "null": pooled.get("null"),
+            "comparator": pooled.get("comparator"),
+            "hac_se": hac.get("hac_se"), "hac_p_value": hac.get("p_value"),
+            "raw_p": record.get("raw_p"), "q_value": record.get("q_value"),
+            "fdr_rejected": record.get("fdr_rejected"),
+            "research_category": record.get("research_category"),
+        }
+    values = [item["mean_auc"] for item in summary.values() if item["mean_auc"] is not None]
+    aggregate = {
+        "configurations": len(summary),
+        "mean_auc_min": min(values) if values else None,
+        "mean_auc_max": max(values) if values else None,
+        "mean_auc_mean": float(np.mean(values)) if values else None,
+        "mean_skill_mean": (float(np.mean(values)) - 0.5) if values else None,
+    }
+    return {"aggregate": aggregate, "by_config": summary}
+
+
+def _old_vs_new_comparison(categories, families, controls):
+    """Descriptive old-vs-new comparison data (no verdict)."""
+    comparison = {"withdrawn_experiment_id": WITHDRAWN_WP6_EXPERIMENT_ID,
+                  "corrective_contract_version": WP6_CORRECTIVE_CONTRACT_VERSION,
+                  "note": "old counts are read from the preserved withdrawn artifact; no old result is endorsed"}
+    old_summary_path = OLD_EXPERIMENT_DIR / "summary.json"
+    if old_summary_path.is_file():
+        try:
+            old = json.loads(old_summary_path.read_text(encoding="utf-8"))
+            comparison["old_research_categories"] = old.get("research_categories")
+            comparison["old_placebo_stop"] = old.get("placebo_stop")
+            comparison["old_contract_version"] = (old.get("git_commit"), )
+        except (OSError, json.JSONDecodeError):
+            comparison["old_research_categories"] = None
+    comparison["new_research_categories"] = categories
+    comparison["new_family_sizes"] = {key: value["number_of_hypotheses"] for key, value in families.items()}
+    comparison["new_controls"] = [
+        {"control_id": item["control_id"], "passed": item["passed"],
+         "stop_required": item["stop_required"], "matched_real_config_id": item["matched_real_config_id"]}
+        for item in controls
+    ]
+    return comparison
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=DEFAULT_CONFIG.model_seed)
-    parser.add_argument("--strategies", default="", help="comma-separated subset of strategies")
-    parser.add_argument("--models", default="", help="comma-separated subset of model names")
-    parser.add_argument("--no-placebo", action="store_true")
+    parser.add_argument("--strategies", default="", help="comma-separated subset of strategies (dev only)")
+    parser.add_argument("--models", default="", help="comma-separated subset of model names (dev only)")
     args = parser.parse_args(argv)
 
     started = time.time()
@@ -131,51 +232,42 @@ def main(argv=None):
     outcome = runner.run_experiment(working, fold_frames, folds, config=config, seed=args.seed,
                                     strategies=strategies, models=models_wanted)
     ledger = outcome["ledger"]
-
-    # Reference real mean IC: best pooled regression configuration's mean metric.
-    regression_configs = [record for record in ledger if record.get("record") == "configuration"
-                          and record.get("task") == "regression"]
-    real_mean_ic = None
-    if regression_configs:
-        values = [record["pooled"].get("mean_metric") for record in regression_configs
-                  if record["pooled"].get("mean_metric") is not None]
-        if values:
-            real_mean_ic = float(max(values, key=lambda value: abs(value)))
-
-    placebo_result = None
-    if not args.no_placebo:
-        placebo_result = runner.run_placebo(working, fold_frames, folds, config=config,
-                                            seed=config.placebo_seed, real_mean_ic=real_mean_ic)
-        print("PLACEBO stop=%s checks=%s" % (placebo_result["overall"]["stop"],
-                                             json.dumps(placebo_result["checks"], default=str)[:400]))
-
-    stop_flag = bool(placebo_result["overall"]["stop"]) if placebo_result else False
-    categories = {}
-    for record in ledger:
-        if record.get("record") != "configuration":
-            continue
-        key = "%s|%s|%s|%s" % (record["model"], sorted(record["params"].items()),
-                               record["strategy"], record["task"])
-        baseline = record.get("baseline_reference") or {}
-        fold_metrics = [{"mean_metric": item.get("mean_metric")} for item in record["fold_metrics"]]
-        record["research_category"] = runner.classify_configuration(
-            fold_metrics, record["pooled"],
-            {"mean_metric": baseline.get("mean_metric")}, stop_flag, config=config)
-        categories[record["research_category"]] = categories.get(record["research_category"], 0) + 1
+    configuration_records = [record for record in ledger if record.get("record") == "configuration"]
+    regression_records = [record for record in configuration_records if record.get("task") == "regression"]
+    classification_records = [record for record in configuration_records if record.get("task") == "classification"]
+    print("CONFIGURATIONS total=%d regression=%d classification=%d" % (
+        len(configuration_records), len(regression_records), len(classification_records)))
+    print("CATEGORIES %s" % json.dumps(outcome["categories"], default=str))
+    print("CONTROLS %s" % json.dumps(
+        [(c["control_id"], c["passed"], c["stop_required"]) for c in outcome["controls"]], default=str))
+    print("OVERALL_STOP %s" % outcome["overall_stop"]["stop"])
 
     commit = current_git_commit() or "unknown"
-    binding = modeling_payload(DATASET_ID, TARGET_ID, FEATURE_SET_ID, holdout.holdout_id,
-                               commit, contract_payload(config), model_registry.registry_payload(),
-                               {"model_seed": config.model_seed, "bootstrap_seed": config.bootstrap_seed,
-                                "placebo_seed": config.placebo_seed},
-                               notes={"wp5_experiment_id": WP5_EXPERIMENT_ID,
-                                      "wp4_corrective_experiment_id": WP4_CORRECTIVE_EXPERIMENT_ID})
+    binding = modeling_payload(
+        DATASET_ID, TARGET_ID, FEATURE_SET_ID, holdout.holdout_id, commit,
+        contract_payload(config), model_registry.registry_payload(),
+        {"model_seed": config.model_seed, "bootstrap_seed": config.bootstrap_seed,
+         "placebo_seed": config.placebo_seed},
+        notes={
+            "corrective_contract_version": WP6_CORRECTIVE_CONTRACT_VERSION,
+            "wp5_experiment_id": WP5_EXPERIMENT_ID,
+            "wp4_corrective_experiment_id": WP4_CORRECTIVE_EXPERIMENT_ID,
+            "withdrawn_wp6_experiment_id": WITHDRAWN_WP6_EXPERIMENT_ID,
+            "misbound_wp6_experiment_id": MISBOUND_WP6_EXPERIMENT_ID,
+            "executed_strategies": list(strategies) if strategies else "ALL",
+            "executed_models": list(models_wanted) if models_wanted else "ALL",
+            "configuration_count": len(configuration_records),
+        })
     experiment = experiment_id(binding)
+    if experiment in (WITHDRAWN_WP6_EXPERIMENT_ID, MISBOUND_WP6_EXPERIMENT_ID):
+        raise RuntimeError("corrective experiment id collides with a preserved historical experiment")
 
     summary_payload = {
         "experiment_id": experiment,
+        "corrective_contract_version": WP6_CORRECTIVE_CONTRACT_VERSION,
         "wp5_experiment_id": WP5_EXPERIMENT_ID,
         "wp4_corrective_experiment_id": WP4_CORRECTIVE_EXPERIMENT_ID,
+        "withdrawn_wp6_experiment_id": WITHDRAWN_WP6_EXPERIMENT_ID,
         "dataset_id": DATASET_ID,
         "panel_version": PANEL_VERSION,
         "target_id": TARGET_ID,
@@ -188,43 +280,71 @@ def main(argv=None):
         "panel_diagnostics": panel_diagnostics,
         "fold_diagnostics": fold_diagnostics,
         "selection_stability": outcome["selection_stability"],
-        "research_categories": categories,
-        "placebo": placebo_result,
-        "placebo_stop": stop_flag,
-        "configuration_count": len([record for record in ledger if record.get("record") == "configuration"]),
+        "research_categories": outcome["categories"],
+        "categories_by_family": {
+            family: _count_categories([record for record in configuration_records
+                                       if record.get("family_id") == family])
+            for family in outcome["families"]
+        },
+        "categories_by_strategy": {
+            strategy: _count_categories([record for record in configuration_records
+                                         if record.get("strategy") == strategy])
+            for strategy in sorted({record.get("strategy") for record in configuration_records})
+        },
+        "families": {key: {k: v for k, v in value.items() if k not in ("q_values", "fdr_rejected")}
+                     for key, value in outcome["families"].items()},
+        "controls": outcome["controls"],
+        "overall_stop": outcome["overall_stop"],
+        "leakage_passed": outcome["leakage_passed"],
+        "robustness": outcome["robustness"],
+        "config_ids": outcome["config_ids"],
+        "configuration_count": len(configuration_records),
         "runtime_seconds": round(time.time() - started, 3),
         "limitations": [
             "WP6 is development-period model research only; it fits no production model",
             "the locked holdout (2022-01-01..2025-08-31) and its labels were never read",
             "research categories are predeclared buckets, not a ranking or a verdict",
             "12-month labels overlap, so all core inference is on the monthly metric series",
-            "level-return portfolio diagnostics are reported separately from predictive metrics",
+            "classification inference is on the AUC skill series AUC_t - 0.5",
+            "model-layer PROMISING requires Benjamini-Hochberg fdr_rejected within its frozen family",
         ],
     }
 
-    legacy = _legacy_wp6_registration(experiment)
     metrics_payload = {
         "configurations": [
-            {"model": record["model"], "family": record["family"], "task": record["task"],
-             "strategy": record["strategy"], "params": record["params"],
-             "fold_metrics": record["fold_metrics"], "pooled": record["pooled"],
-             "runtime_seconds": record["runtime_seconds"],
+            {"config_id": record["config_id"], "model": record["model"],
+             "family": record["family"], "task": record["task"], "strategy": record["strategy"],
+             "preprocessing": record["preprocessing"], "params": record["params"],
+             "metric": record["metric"], "fold_metrics": record["fold_metrics"],
+             "pooled": record["pooled"], "runtime_seconds": record["runtime_seconds"],
+             "family_id": record.get("family_id"), "raw_p": record.get("raw_p"),
+             "q_value": record.get("q_value"), "fdr_rejected": record.get("fdr_rejected"),
              "research_category": record.get("research_category")}
-            for record in ledger if record.get("record") == "configuration"
+            for record in configuration_records
         ],
     }
+
     artifacts = {
         "summary.json": summary_payload,
         "metrics.json": metrics_payload,
         "baselines.json": outcome["baselines"],
         "selection_stability.json": outcome["selection_stability"],
+        "families.json": outcome["families"],
+        "controls.json": outcome["controls"],
+        "robustness.json": outcome["robustness"],
+        "regression_summary.json": _regression_summary(regression_records),
+        "classification_summary.json": _classification_summary(classification_records),
+        "categories.json": {"overall": outcome["categories"],
+                           "by_family": summary_payload["categories_by_family"],
+                           "by_strategy": summary_payload["categories_by_strategy"]},
+        "old_vs_new_comparison.json": _old_vs_new_comparison(
+            outcome["categories"], outcome["families"], outcome["controls"]),
     }
-    # ledger records go to the immutable JSONL ledger
     ledger_records = list(ledger)
     provenance = {
         "binding.json": binding,
         "contract.json": contract_payload(config),
-        "registration.json": legacy,
+        "registration.json": _legacy_wp6_registration(experiment),
     }
 
     paths = write_experiment(ROOT, binding, artifacts, provenance, ledger_records=ledger_records)
@@ -232,6 +352,7 @@ def main(argv=None):
         "experiment_id": experiment, "wp": "wp6", "dataset_id": DATASET_ID,
         "target_id": TARGET_ID, "feature_set_id": FEATURE_SET_ID, "holdout_id": holdout.holdout_id,
         "git_commit": commit, "panel_version": PANEL_VERSION, "target_version": TARGET_VERSION,
+        "corrective_contract_version": WP6_CORRECTIVE_CONTRACT_VERSION,
     })
     print("EXPERIMENT %s" % experiment)
     print("ARTIFACTS %s" % paths["artifact_dir"])
@@ -242,10 +363,12 @@ def main(argv=None):
 
 def _legacy_wp6_registration(experiment):
     return {
-        "schema_version": "wp6_model_research_registration_v1",
+        "schema_version": "wp6_model_research_corrective_registration_v2",
         "experiment_id": experiment,
+        "corrective_contract_version": WP6_CORRECTIVE_CONTRACT_VERSION,
         "supersedes": None,
-        "note": "WP6 is a NEW experiment; no historical WP6 artifact exists to supersede",
+        "note": "WP6 corrective rerun; the withdrawn experiment %s and misbound %s are preserved"
+                % (WITHDRAWN_WP6_EXPERIMENT_ID, MISBOUND_WP6_EXPERIMENT_ID),
     }
 
 
