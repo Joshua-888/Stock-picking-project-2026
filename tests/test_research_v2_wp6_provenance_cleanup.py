@@ -8,9 +8,11 @@ They freeze the invariants that repair the WP6 provenance binding defect:
 
 * ``experiment_05ddc3721b4a`` is withdrawn/misbound non-canonical and can never
   resolve as canonical;
-* ``experiment_d6eda4a491ca`` resolves as the canonical WP6 experiment;
 * ``experiment_f7864f37998f`` is withdrawn/superseded and preserved
   byte-unchanged;
+* ``experiment_d6eda4a491ca`` is superseded by audit remediation and preserved
+  byte-unchanged;
+* ``experiment_ee434a07a25d`` resolves as the canonical WP6 experiment;
 * the historical misbound and superseded records are preserved byte-unchanged;
 * the canonical producing commit actually contains the WP6 producing code, and
   the misbound commit does not;
@@ -31,15 +33,18 @@ from src.research import wp6_provenance_corrections as wpc
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CORRECTIONS_DIR = REPO_ROOT / "provenance" / "wp6" / "corrections"
 MISBOUND_DIR = REPO_ROOT / "provenance" / "wp6" / "experiment_05ddc3721b4a"
-CANONICAL_DIR = REPO_ROOT / "provenance" / "wp6" / "experiment_d6eda4a491ca"
 SUPERSEDED_DIR = REPO_ROOT / "provenance" / "wp6" / "experiment_f7864f37998f"
+FORMER_CANONICAL_DIR = REPO_ROOT / "provenance" / "wp6" / "experiment_d6eda4a491ca"
+CANONICAL_DIR = REPO_ROOT / "provenance" / "wp6" / "experiment_ee434a07a25d"
 
 OLD_EXPERIMENT_ID = "experiment_05ddc3721b4a"
 SUPERSEDED_EXPERIMENT_ID = "experiment_f7864f37998f"
-NEW_EXPERIMENT_ID = "experiment_d6eda4a491ca"
-CANONICAL_COMMIT = "1bbfed0c9a58bf1958926a67e33f5fa5f944215d"
+FORMER_CANONICAL_EXPERIMENT_ID = "experiment_d6eda4a491ca"
+NEW_EXPERIMENT_ID = "experiment_ee434a07a25d"
+CANONICAL_COMMIT = "21eec0d907df8fc8ec191c10ba9b056bd6dfa006"
 MISBOUND_COMMIT = "8751c164b8c504628a2b9122e41397cf41f71276"
 SUPERSEDED_COMMIT = "89aadecf304d789b00daf13983641847b4a7d3bd"
+FORMER_CANONICAL_COMMIT = "1bbfed0c9a58bf1958926a67e33f5fa5f944215d"
 
 WP6_PRODUCER_FILES = (
     "src/research/modeling/runner.py",
@@ -62,6 +67,15 @@ SUPERSEDED_SHA256 = {
     "contract.json": "3c4ce8febb212df61727beb7feaa5ac1ba8d19dfcb154fec3cfb834ea2658bf1",
     "index_entry.json": "88dd5bbca669f0eaa9824d15092f408fafda45bf991febf27c32e1a42424e576",
     "registration.json": "f81f95c5fc5ee884b4ede36b9a5182b876f7b1838a2821562a197e8d2c4a9d50",
+}
+
+# Frozen SHA-256 of the corrected experiment that was canonical before the
+# audit-remediation supersession. These files are also immutable evidence.
+FORMER_CANONICAL_SHA256 = {
+    "binding.json": "3fd3cc05eccbb17baf108a0e159ec553e4df36eca0cd55cc1817f12ea7b3c49b",
+    "contract.json": "48e6ef43d7d2ef2191b48a4c508756bc9878697e9d4399f1c3b9259db08e3af9",
+    "index_entry.json": "6960c3ee289feee0263adea645fdccfb787ffa7caaad97946d9d4458dbc1e6c8",
+    "registration.json": "b263742c1f30cecbf57915a10a829a86e9360190cdbcae8cc4fc538b3010b945",
 }
 
 
@@ -124,6 +138,7 @@ def test_canonical_experiment_resolves():
     # the withdrawn misbound and superseded records are visible from the view
     assert OLD_EXPERIMENT_ID in resolved["withdrawn_experiment_ids"]
     assert SUPERSEDED_EXPERIMENT_ID in resolved["withdrawn_experiment_ids"]
+    assert FORMER_CANONICAL_EXPERIMENT_ID in resolved["withdrawn_experiment_ids"]
     assert wpc.assert_canonical(NEW_EXPERIMENT_ID)["canonical"] is True
 
 
@@ -189,6 +204,39 @@ def test_superseded_records_are_byte_unchanged():
     assert withdrawal["canonical_git_commit"] == CANONICAL_COMMIT
     assert withdrawal["superseded_records"] == [
         "provenance/wp6/experiment_f7864f37998f/binding.json"
+    ]
+
+
+# ── 3c. the former canonical experiment was superseded, not rewritten ────────
+
+def test_former_canonical_records_are_superseded_and_byte_unchanged():
+    for name, expected in FORMER_CANONICAL_SHA256.items():
+        path = FORMER_CANONICAL_DIR / name
+        assert path.is_file(), "former canonical record is missing: %s" % path
+        assert _sha256(path) == expected, "former canonical record was modified: %s" % path
+
+    binding = json.loads((FORMER_CANONICAL_DIR / "binding.json").read_text(encoding="utf-8"))
+    assert binding["git_commit"] == FORMER_CANONICAL_COMMIT
+    entry = json.loads((FORMER_CANONICAL_DIR / "index_entry.json").read_text(encoding="utf-8"))
+    assert entry["experiment_id"] == FORMER_CANONICAL_EXPERIMENT_ID
+    assert entry["git_commit"] == FORMER_CANONICAL_COMMIT
+
+    resolved = wpc.resolve_wp6_experiment(FORMER_CANONICAL_EXPERIMENT_ID)
+    assert resolved["canonical"] is False
+    assert resolved["experiment_id"] == FORMER_CANONICAL_EXPERIMENT_ID
+    assert resolved["canonical_experiment_id"] == NEW_EXPERIMENT_ID
+    assert resolved["status"] == "SUPERSEDED"
+    assert resolved["canonical_record"] is None
+    assert wpc.is_non_canonical(FORMER_CANONICAL_EXPERIMENT_ID) is True
+    with pytest.raises(wpc.Wp6ProvenanceResolutionError):
+        wpc.assert_canonical(FORMER_CANONICAL_EXPERIMENT_ID)
+
+    withdrawal = wpc.supersession_record(FORMER_CANONICAL_EXPERIMENT_ID)
+    assert withdrawal["old_experiment_id"] == FORMER_CANONICAL_EXPERIMENT_ID
+    assert withdrawal["new_experiment_id"] == NEW_EXPERIMENT_ID
+    assert withdrawal["canonical_git_commit"] == CANONICAL_COMMIT
+    assert withdrawal["superseded_records"] == [
+        "provenance/wp6/experiment_d6eda4a491ca/binding.json"
     ]
 
 
