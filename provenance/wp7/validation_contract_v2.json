@@ -1,0 +1,347 @@
+{
+  "schema_version": "wp7_validation_contract_v2",
+  "contract_version": "WP7_VALIDATION_CONTRACT_V2",
+  "created_before_results": true,
+  "supersedes_contract_version": "WP7_VALIDATION_CONTRACT_V1",
+  "supersession_reason": "v1 required four 24-month outer_test windows with inner min_folds=4, which is geometrically infeasible in the 168-month development panel ending 2020-12; corrected before any WP7 results per WFV_WP7_CONTRACT_FAIL",
+  "frozen_at_stage": "WP7_PRESTART",
+  "certified_wp6_inputs": {
+    "dataset_id": "dataset_35a278e17c13",
+    "target_set_id": "target_set_d2bb16610bce",
+    "feature_set_id": "feature_set_4f7b43726310",
+    "wp6_experiment_id": "experiment_ee434a07a25d",
+    "wp6_producing_commit": "21eec0d907df8fc8ec191c10ba9b056bd6dfa006",
+    "wp4_corrective_experiment_id": "experiment_834a7e60f13c",
+    "wp5_experiment_id": "experiment_f985287c1315"
+  },
+  "eligible_task": {
+    "task": "classification",
+    "regression": {
+      "eligible": false,
+      "exclusion_reason": "WP6 mandatory shuffled_target_regression control triggered overall_stop for regression"
+    }
+  },
+  "target": "outperform_12m",
+  "feature_universe": [
+    "earnings_yield",
+    "current_pe",
+    "price_to_book",
+    "price_to_sales",
+    "free_cash_flow_yield",
+    "dividend_yield",
+    "roa",
+    "roe",
+    "gross_margin",
+    "operating_margin",
+    "roic",
+    "five_year_eps_growth",
+    "five_year_revenue_growth",
+    "eps_growth_acceleration",
+    "revenue_growth_acceleration",
+    "six_month_momentum",
+    "twelve_month_momentum",
+    "five_year_price_gain",
+    "debt_to_equity",
+    "market_cap"
+  ],
+  "feature_universe_source": "WP6 binding.json feature_universe (20 features)",
+  "preprocessing": {
+    "spec": "VALUE_SPEC",
+    "requirement": "all fitted transforms must be train-only"
+  },
+  "feature_selection": {
+    "principle": "frozen WP6 strategy semantics must be reused train-only; NO new full-sample selection",
+    "eligible_strategies": [
+      "B_coverage_qualified",
+      "F_economic_family_representatives"
+    ],
+    "implementation": "src/research/modeling/features.py"
+  },
+  "eligible_model_set": {
+    "description": "FROZEN list of the 9 WP6 classification PROMISING configurations plus loss baseline baseline_base_rate",
+    "baseline": {
+      "config_id": "baseline_base_rate",
+      "model": "baseline_base_rate",
+      "strategy": null,
+      "preprocessing": [
+        "VALUE_SPEC"
+      ],
+      "params": {}
+    },
+    "configs": [
+      {
+        "config_id": "modelcfg_00c68894e319",
+        "model": "hist_gradient_boosting",
+        "strategy": "F_economic_family_representatives",
+        "preprocessing": [
+          "VALUE_SPEC"
+        ],
+        "params": {
+          "learning_rate": 0.05,
+          "max_depth": 3,
+          "max_iter": 300,
+          "min_samples_leaf": 50
+        }
+      },
+      {
+        "config_id": "modelcfg_040a0c85df2c",
+        "model": "extra_trees",
+        "strategy": "F_economic_family_representatives",
+        "preprocessing": [
+          "VALUE_SPEC"
+        ],
+        "params": {
+          "max_depth": 4,
+          "min_samples_leaf": 50,
+          "n_estimators": 300
+        }
+      },
+      {
+        "config_id": "modelcfg_158499379e80",
+        "model": "extra_trees",
+        "strategy": "B_coverage_qualified",
+        "preprocessing": [
+          "VALUE_SPEC"
+        ],
+        "params": {
+          "max_depth": 4,
+          "min_samples_leaf": 50,
+          "n_estimators": 300
+        }
+      },
+      {
+        "config_id": "modelcfg_1f0278c43c28",
+        "model": "extra_trees",
+        "strategy": "F_economic_family_representatives",
+        "preprocessing": [
+          "VALUE_SPEC"
+        ],
+        "params": {
+          "max_depth": 8,
+          "min_samples_leaf": 50,
+          "n_estimators": 300
+        }
+      },
+      {
+        "config_id": "modelcfg_5dcf351cd952",
+        "model": "extra_trees",
+        "strategy": "F_economic_family_representatives",
+        "preprocessing": [
+          "VALUE_SPEC"
+        ],
+        "params": {
+          "max_depth": 4,
+          "min_samples_leaf": 20,
+          "n_estimators": 300
+        }
+      },
+      {
+        "config_id": "modelcfg_99e145df5bc8",
+        "model": "extra_trees",
+        "strategy": "B_coverage_qualified",
+        "preprocessing": [
+          "VALUE_SPEC"
+        ],
+        "params": {
+          "max_depth": 4,
+          "min_samples_leaf": 20,
+          "n_estimators": 300
+        }
+      },
+      {
+        "config_id": "modelcfg_b8151deebdc7",
+        "model": "extra_trees",
+        "strategy": "B_coverage_qualified",
+        "preprocessing": [
+          "VALUE_SPEC"
+        ],
+        "params": {
+          "max_depth": 8,
+          "min_samples_leaf": 50,
+          "n_estimators": 300
+        }
+      },
+      {
+        "config_id": "modelcfg_e981f5ee119e",
+        "model": "extra_trees",
+        "strategy": "B_coverage_qualified",
+        "preprocessing": [
+          "VALUE_SPEC"
+        ],
+        "params": {
+          "max_depth": 8,
+          "min_samples_leaf": 20,
+          "n_estimators": 300
+        }
+      },
+      {
+        "config_id": "modelcfg_fecc1b87e28b",
+        "model": "hist_gradient_boosting",
+        "strategy": "F_economic_family_representatives",
+        "preprocessing": [
+          "VALUE_SPEC"
+        ],
+        "params": {
+          "learning_rate": 0.05,
+          "max_depth": 6,
+          "max_iter": 300,
+          "min_samples_leaf": 50
+        }
+      }
+    ]
+  },
+  "inner_walk_forward_design": {
+    "mode": "chronological_expanding_folds_only",
+    "min_train_months": 60,
+    "validation_window_months": 12,
+    "horizon_months": 12,
+    "purge_months": 12,
+    "embargo_months": 12,
+    "min_folds": 4,
+    "forbidden_splitters": [
+      "KFold",
+      "train_test_split",
+      "ShuffleSplit"
+    ]
+  },
+  "outer_walk_forward_design": {
+    "mode": "nested_chronological_outer_folds",
+    "outer_train": "prior data of each outer fold",
+    "inner_procedure": "inner-forward model_selection_candidate and calibration selection on outer_train with purge/embargo",
+    "freeze_before_eval": true,
+    "outer_test": "ONLY the 12-month chronological outer_test",
+    "outer_test_window_months": 12,
+    "outer_test_windows": [
+      {
+        "window_id": "outer_test_1",
+        "start": "2017-01",
+        "end": "2017-12",
+        "start_index": 120,
+        "end_index": 131
+      },
+      {
+        "window_id": "outer_test_2",
+        "start": "2018-01",
+        "end": "2018-12",
+        "start_index": 132,
+        "end_index": 143
+      },
+      {
+        "window_id": "outer_test_3",
+        "start": "2019-01",
+        "end": "2019-12",
+        "start_index": 144,
+        "end_index": 155
+      },
+      {
+        "window_id": "outer_test_4",
+        "start": "2020-01",
+        "end": "2020-12",
+        "start_index": 156,
+        "end_index": 167
+      }
+    ],
+    "expected_inner_fold_counts_by_outer_fold": [
+      4,
+      5,
+      6,
+      7
+    ],
+    "fold_geometry_requirement": "exact outer_test windows must be derived and serialized from the same deterministic fold geometry before any evaluation"
+  },
+  "purge_embargo": {
+    "purge_months": 12,
+    "rule": "apply 12-month purge before every inner and outer validation/test boundary",
+    "label_overlap_rule": "no overlapping 12-month labels across train/test"
+  },
+  "model_selection_rule": {
+    "primary_criterion": "deterministic highest mean inner validation AUC-skill (mean AUC - 0.5 across inner validation months, adjusted for fold direction/agreement) among eligible configs",
+    "forbidden": [
+      "post-hoc max-abs selection of reference",
+      "p-value-only selection"
+    ],
+    "tie_break": [
+      "smaller hyperparameter complexity",
+      "deterministic config_id order"
+    ]
+  },
+  "calibration": {
+    "scope": "train/inner-only",
+    "candidate_set": [
+      "none",
+      "platt_scaling",
+      "isotonic_regression"
+    ],
+    "selection_rule": "best mean inner Brier skill versus train base-rate benchmark on inner validation folds",
+    "tie_break": "deterministic earliest candidate order",
+    "forbidden_scope": [
+      "outer test",
+      "holdout"
+    ]
+  },
+  "regression_metrics": {
+    "purpose": "declared only, for possible diagnostics if any later regression candidate",
+    "metrics": [
+      "monthly cross-sectional Spearman IC",
+      "mean IC",
+      "ICIR",
+      "positive-month fraction",
+      "HAC inference",
+      "MAE",
+      "RMSE"
+    ]
+  },
+  "classification_metrics": {
+    "metrics": [
+      "ROC-AUC (inferential benchmark 0.5, skill AUC-0.5)",
+      "PR-AUC vs train prevalence",
+      "Brier vs train base-rate benchmark",
+      "log-loss vs train base-rate benchmark",
+      "calibration slope/intercept",
+      "positive-month/fold fraction"
+    ]
+  },
+  "multiple_testing_policy": {
+    "policy": "candidate set is a frozen 9-model selection",
+    "reporting": "report raw and BH-FDR q-values across the frozen classification family",
+    "final_model_performance": "selection-adjusted nested estimate",
+    "claim_restriction": "must NOT be claimed as unbiased holdout evidence"
+  },
+  "robustness_requirements": [
+    "outer-fold stability",
+    "subperiod_stability",
+    "model_selection_stability",
+    "feature_selection_stability",
+    "hyperparameter_stability",
+    "calibration_stability",
+    "complexity_vs_simple_baseline",
+    "negative_controls (noise-feature and shuffled-target controls with reachable STOP)"
+  ],
+  "final_model_freeze_conditions": {
+    "freeze": [
+      "selected config",
+      "calibration",
+      "preprocessing",
+      "feature strategy",
+      "seeds",
+      "producing commit"
+    ],
+    "forbidden": "do NOT retune after looking at outer test or holdout"
+  },
+  "seeds": {
+    "model_seed": 20260930,
+    "bootstrap_seed": 20260926,
+    "placebo_seed": 20260926
+  },
+  "holdout_procedure": {
+    "phase": "future",
+    "canonical_holdout_id": "holdout_7ce54e933e16",
+    "evaluation_count": "exactly one locked-holdout evaluation",
+    "authorization_requirement": "only after explicit HOLDOUT_EVALUATION_AUTHORIZATION",
+    "wp7_pre_holdout_rule": "no holdout access in WP7 pre-holdout phase"
+  },
+  "stop_conditions": {
+    "mandatory_negative_control_failure": "if any mandatory negative control fails -> WP7_PRE_HOLDOUT_BLOCKED",
+    "blocking_action": "do not access holdout"
+  }
+}
