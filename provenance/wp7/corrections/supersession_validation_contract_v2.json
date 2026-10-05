@@ -1,0 +1,11 @@
+{
+  "schema_version": "wp7_validation_contract_supersession_v1",
+  "old_contract_version": "WP7_VALIDATION_CONTRACT_V2",
+  "old_contract_file": "provenance/wp7/validation_contract_v2.json",
+  "new_contract_version": "WP7_VALIDATION_CONTRACT_V3",
+  "new_contract_file": "provenance/wp7/validation_contract_v3.json",
+  "status": "SUPERSEDED_AS_INFEASIBLE",
+  "preserved_unchanged": true,
+  "created_before_results": true,
+  "reason": "v2 min_train_months=60 allowed final inner-validation window labels to overlap outer_test starts; corrected to min_train_months=48 plus explicit purge-before-outer_test rule per WFV_WP7_CONTRACT_FAIL"
+}
