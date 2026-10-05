@@ -1,0 +1,28 @@
+{
+  "status": "WP6_COMPLETE",
+  "certification_schema": "wp6_certification_v1",
+  "certified_at": "2026-10-05T19:30:00+02:00",
+  "branch": "feat/v2-wp6-model-research",
+  "final_head": "1498eb15e105d2d47597500bd2094dddab930c4c",
+  "experiment_id": "experiment_ee434a07a25d",
+  "producing_code_commit": "21eec0d907df8fc8ec191c10ba9b056bd6dfa006",
+  "corrective_contract_version": "v2_wp6_model_research_v2_corrective",
+  "dataset_id": "dataset_35a278e17c13",
+  "target_id": "target_set_d2bb16610bce",
+  "feature_set_id": "feature_set_4f7b43726310",
+  "wp4_corrective_experiment_id": "experiment_834a7e60f13c",
+  "wp5_experiment_id": "experiment_f985287c1315",
+  "canonical_holdout_id": "holdout_7ce54e933e16",
+  "holdout_performance_accessed": false,
+  "configuration_count": 312,
+  "research_categories": {"REJECTED": 186, "INCONCLUSIVE": 92, "NO_EVIDENCE": 22, "PROMISING": 9, "UNSTABLE": 3},
+  "overall_stop": {"stop": true, "affected_tasks": ["regression"], "failed_controls": ["shuffled_target_regression"]},
+  "known_limitations": ["WP6 regression task is under mandatory STOP and is excluded from WP7", "WP6 classification PROMISING entries are development-period research categories only, not production approvals", "locked holdout performance was never inspected during WP6"],
+  "verdicts": {
+    "model_researcher": "MODEL_RESEARCH_PASS",
+    "walk_forward_validator": "WFV_WP6_PASS",
+    "research_ops_engineer": "REPRODUCIBLE",
+    "quant_auditor": {"audit_id": "audit_8627167e0e11", "verdict": "AUDIT_PASS", "hard_defects": 0, "material_defects": 0}
+  },
+  "tests": {"command": "pytest tests/test_research_v2_wp6_*.py", "passed": 75, "failed": 0}
+}
