@@ -1,6 +1,6 @@
 """WP7 PRE-HOLDOUT nested walk-forward validation engine.
 
-Deterministic implementation of ``provenance/wp7/validation_contract_v3.json``.
+Deterministic implementation of ``provenance/wp7/validation_contract_v4.json``.
 The engine is development-only and never accesses locked-holdout performance,
 labels, or any row whose ``feature_asof >= 2021-01-01``.
 
@@ -49,8 +49,8 @@ from src.research.modeling.placebo import control_object, overall_stop
 from src.research.modeling.placebo import shuffle_training_target
 from src.research.modeling.preprocessing import PreprocessingSpec, Preprocessor
 
-CONTRACT_REL = Path("provenance") / "wp7" / "validation_contract_v3.json"
-CONTRACT_MD_REL = Path("docs") / "research_v2" / "wp7_validation_contract_v3.md"
+CONTRACT_REL = Path("provenance") / "wp7" / "validation_contract_v4.json"
+CONTRACT_MD_REL = Path("docs") / "research_v2" / "wp7_validation_contract_v4.md"
 CANONICAL_HOLDOUT_ID = "holdout_7ce54e933e16"
 GENERATION_KIND = "wp7_model_generation_candidate"
 MODEL_CANDIDATE_REL = Path("provenance") / "wp7" / "model_generation_candidate.json"
@@ -132,7 +132,7 @@ def wp7_inner_config():
     return replace(
         WP6_DEFAULT_CONFIG,
         validation_window_months=12,
-        min_train_months=48,
+        min_train_months=37,
         horizon_months=12,
     )
 

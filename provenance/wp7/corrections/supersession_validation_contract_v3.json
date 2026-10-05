@@ -1,0 +1,11 @@
+{
+  "schema_version": "wp7_validation_contract_supersession_v1",
+  "old_contract_version": "WP7_VALIDATION_CONTRACT_V3",
+  "old_contract_file": "provenance/wp7/validation_contract_v3.json",
+  "new_contract_version": "WP7_VALIDATION_CONTRACT_V4",
+  "new_contract_file": "provenance/wp7/validation_contract_v4.json",
+  "status": "SUPERSEDED_AS_INFEASIBLE",
+  "preserved_unchanged": true,
+  "created_before_results": true,
+  "reason": "v3 min_train_months=48 gave actual safe inner fold counts [3,4,6,7] against frozen [4,5,6,7]; corrected to min_train_months=37 per WFV_WP7_CONTRACT_FAIL"
+}

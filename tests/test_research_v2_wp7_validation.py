@@ -1,7 +1,7 @@
 """WP7 pre-holdout validation tests (synthetic fixtures only; no research data).
 
 These tests prove the WP7 engine honours the frozen
-``WP7_VALIDATION_CONTRACT_V3`` geometry, purge semantics, train-only fitting,
+``WP7_VALIDATION_CONTRACT_V4`` geometry, purge semantics, train-only fitting,
 determinism, negative-control STOP reachability, and provenance binding. No
 locked-holdout row, label, or metric is ever constructed or read here.
 """
@@ -74,8 +74,8 @@ def panel():
 # --------------------------------------------------------------------------
 
 
-def test_contract_is_v3_classification_only(contract):
-    assert contract["contract_version"] == "WP7_VALIDATION_CONTRACT_V3"
+def test_contract_is_v4_classification_only(contract):
+    assert contract["contract_version"] == "WP7_VALIDATION_CONTRACT_V4"
     assert contract["eligible_task"]["task"] == "classification"
     assert contract["eligible_task"]["regression"]["eligible"] is False
     assert contract["target"] == "outperform_12m"
@@ -112,7 +112,7 @@ def test_inner_design_matches_the_frozen_fields(contract):
     inner = contract["inner_walk_forward_design"]
     config = wp7.wp7_inner_config()
     assert inner["mode"] == "chronological_expanding_folds_only"
-    assert config.min_train_months == inner["min_train_months"] == 48
+    assert config.min_train_months == inner["min_train_months"] == 37
     assert config.validation_window_months == inner["validation_window_months"] == 12
     assert config.horizon_months == inner["horizon_months"] == 12
     assert config.min_folds == inner["min_folds"] == 4
