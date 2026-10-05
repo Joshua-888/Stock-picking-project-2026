@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, replace
@@ -53,7 +54,9 @@ CONTRACT_REL = Path("provenance") / "wp7" / "validation_contract_v4.json"
 CONTRACT_MD_REL = Path("docs") / "research_v2" / "wp7_validation_contract_v4.md"
 CANONICAL_HOLDOUT_ID = "holdout_7ce54e933e16"
 GENERATION_KIND = "wp7_model_generation_candidate"
-MODEL_CANDIDATE_REL = Path("provenance") / "wp7" / "model_generation_candidate.json"
+MODEL_CANDIDATE_DIR_REL = Path("provenance") / "wp7" / "candidates"
+# Deprecated fixed-path constant retained only for test clarity/introspection.
+MODEL_CANDIDATE_REL = MODEL_CANDIDATE_DIR_REL / "<generation_id>.json"
 
 TARGET = "outperform_12m"
 CLASSIFICATION_FAMILY_ID = "wp7_classification_predictive_skill"
@@ -64,6 +67,80 @@ CONTROL_SKILL_FLOOR = 0.05
 
 class Wp7ValidationError(RuntimeError):
     """Raised when WP7 cannot proceed honestly under the frozen contract."""
+
+
+def _git_output(args, root, strip=True):
+    try:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise Wp7ValidationError("git is unavailable for WP7 reproducibility preflight: %s" % exc) from exc
+    if completed.returncode != 0:
+        raise Wp7ValidationError(
+            "git command failed during WP7 preflight: %s" % " ".join(args)
+        )
+    output = completed.stdout or ""
+    return output.strip() if strip else output
+
+
+def _is_producing_code_path(path):
+    """True when a modified tracked path can change the WP7 producing code/contract."""
+    normalized = path.replace("\\", "/")
+    if normalized == "scripts/research_v2/wp7_validation.py":
+        return True
+    if normalized == "provenance/wp7/validation_contract_v4.json":
+        return True
+    return normalized.startswith("src/research/") or normalized.startswith(
+        "scripts/research_v2/"
+    )
+
+
+def _dirty_non_ignored_paths(root):
+    # ``git status --porcelain --untracked-files=no`` reports only tracked-file
+    # modifications; ignored/untracked files such as ``.a0proj/`` and ignored
+    # artifacts are deliberately allowed.
+    output = _git_output(
+        ["status", "--porcelain", "--untracked-files=no"], root, strip=False
+    )
+    paths = set()
+    for line in output.splitlines():
+        if len(line) < 4:
+            continue
+        # porcelain format is ``XY PATH`` (plus rename arrows after the path);
+        # with untracked files disabled every line is a tracked working-tree change.
+        path = line[3:].strip()
+        if path:
+            paths.add(path)
+    return sorted(paths)
+
+
+def validate_clean_producing_worktree(root=None):
+    """Fail when a tracked producing-code file is modified before an honest WP7 run.
+
+    The resolved HEAD is returned as the producing commit. Uncommitted producing
+    code/contract changes mean the HEAD hash would not contain the code that
+    actually produced results. Unrelated tracked files are not required to be
+    clean, and ignored/untracked files are always allowed.
+    """
+    root = Path(root or ROOT)
+    commit = current_git_commit(str(root))
+    if not commit:
+        raise Wp7ValidationError("no git commit available for reproducible provenance")
+    dirty = [
+        path for path in _dirty_non_ignored_paths(root) if _is_producing_code_path(path)
+    ]
+    if dirty:
+        raise Wp7ValidationError(
+            "WP7 refusing to run with modified tracked producing-code files; producing "
+            "commit %s would not contain the actual working-tree code. Dirty paths: %s"
+            % (commit, ", ".join(dirty))
+        )
+    return commit
 
 
 @dataclass(frozen=True)
@@ -1061,7 +1138,7 @@ def write_generation_artifacts(result, root=None):
     root = Path(root or ROOT)
     gid = generation_id(result)
     artifact_root = root / "artifacts" / "research" / "wp7" / gid
-    candidate_path = root / MODEL_CANDIDATE_REL
+    candidate_path = root / MODEL_CANDIDATE_DIR_REL / ("%s.json" % gid)
     candidate_record = {
         "schema_version": "wp7_model_generation_candidate_v1",
         "generation_id": gid,
@@ -1178,10 +1255,31 @@ def load_validation_panel():
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--commit", default=None, help="override current git commit (testing only)")
+    parser.add_argument("--commit", default=None, help="override producing commit (testing only)")
+    parser.add_argument(
+        "--allow-commit-override",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args(argv)
 
     started = time.time()
+    # A dirty tracked worktree makes the recorded HEAD lie about what produced
+    # results. Validate before loading any research panel, and before deciding
+    # what commit to bind.
+    clean_head = validate_clean_producing_worktree(ROOT)
+    if args.commit is not None:
+        if not args.allow_commit_override:
+            raise Wp7ValidationError(
+                "--commit is a test-only override; it must be used with "
+                "--allow-commit-override, and actual producing code must still "
+                "be committed and clean"
+            )
+        commit = args.commit
+    else:
+        commit = clean_head
+    print("PRODUCING_COMMIT %s clean_worktree=True" % commit)
+
     contract = load_contract()
     holdout = locked_holdout()
     if holdout.holdout_id != CANONICAL_HOLDOUT_ID:
@@ -1203,10 +1301,6 @@ def main(argv=None):
         diagnostics["date_min"], diagnostics["date_max"],
     ))
     print("DEVELOPMENT_BOUNDARY_OK max_feature_asof=%s" % max_asof.strftime("%Y-%m-%d"))
-
-    commit = args.commit or current_git_commit()
-    if not commit:
-        raise Wp7ValidationError("no git commit available for reproducible provenance")
 
     result = run_pre_holdout_validation(
         frame, contract=contract, commit=commit, holdout=holdout

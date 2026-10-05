@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 import numpy as np
@@ -26,6 +27,7 @@ if str(SCRIPTS) not in sys.path:
 
 import wp7_validation as wp7  # noqa: E402
 
+from src.research import wp7_generation_corrections as wpc7  # noqa: E402
 from src.research.holdout import locked_holdout  # noqa: E402
 from src.research.modeling.contract import model_feature_universe  # noqa: E402
 
@@ -656,3 +658,177 @@ def test_predictions_artifact_is_development_outer_test_only(tmp_path):
     assert payload["prediction_scope"] == "development_outer_test_windows_only"
     for row in payload["rows"]:
         assert row["modeling_month"] < "2021-01"
+
+
+# --------------------------------------------------------------------------
+# clean-worktree / committed-code preflight
+# --------------------------------------------------------------------------
+
+
+def _git_init_repo(root):
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q"], cwd=str(root), check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"],
+                   cwd=str(root), check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(root), check=True)
+
+
+def _write_nested_script(root, text="# committed code\n"):
+    path = root / "scripts" / "research_v2" / "wp7_validation.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_clean_commit_preflight_succeeds_on_clean_tracked_tree(tmp_path):
+    _git_init_repo(tmp_path)
+    _write_nested_script(tmp_path)
+    subprocess.run(["git", "add", "."], cwd=str(tmp_path), check=True)
+    subprocess.run(["git", "commit", "-qm", "clean"], cwd=str(tmp_path), check=True)
+
+    # An unrelated tracked file may legitimately be dirty; only producing-code
+    # paths in scripts/research_v2 or src/research block the run.
+    (tmp_path / "README.md").write_text("unrelated", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=str(tmp_path), check=True)
+    subprocess.run(["git", "commit", "-qm", "unrelated"], cwd=str(tmp_path), check=True)
+    (tmp_path / "README.md").write_text("dirty unrelated\n", encoding="utf-8")
+
+    commit = wp7.validate_clean_producing_worktree(tmp_path)
+    assert commit
+    assert subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(tmp_path),
+        capture_output=True, text=True, check=True
+    ).stdout.strip() == commit
+
+
+def test_dirty_tracked_producing_code_guard_raises(tmp_path):
+    _git_init_repo(tmp_path)
+    script = _write_nested_script(tmp_path)
+    subprocess.run(["git", "add", "."], cwd=str(tmp_path), check=True)
+    subprocess.run(["git", "commit", "-qm", "clean"], cwd=str(tmp_path), check=True)
+
+    script.write_text(
+        "# uncommitted change would not be in HEAD\n", encoding="utf-8"
+    )
+    with pytest.raises(wp7.Wp7ValidationError, match="modified tracked producing-code files"):
+        wp7.validate_clean_producing_worktree(tmp_path)
+
+
+def test_commit_override_requires_test_flag_and_preflight_still_runs(monkeypatch):
+    monkeypatch.setattr(
+        wp7, "validate_clean_producing_worktree", lambda root=None: "a" * 40
+    )
+    monkeypatch.setattr(
+        wp7, "load_validation_panel",
+        lambda: pytest.fail("preflight must reject override before loading panel"),
+    )
+    with pytest.raises(wp7.Wp7ValidationError, match="test-only override"):
+        wp7.main(["--commit", "b" * 40])
+
+
+# --------------------------------------------------------------------------
+# per-generation candidate persistence / non-overwrite
+# --------------------------------------------------------------------------
+
+
+def test_candidate_persistence_is_per_generation_and_non_overwriting(tmp_path):
+    result = _result_stub(commit="a" * 40)
+    result["predictions"] = {"phase": "wp7_pre_holdout", "rows": []}
+    result["metrics"] = {}
+    result["multiple_testing"] = {}
+    result["control_evidence"] = {}
+    result["robustness"] = {}
+
+    first = wp7.write_generation_artifacts(result, tmp_path)
+    assert first["candidate_path"].endswith(
+        "%s.json" % first["generation_id"]
+    )
+    assert not (tmp_path / "provenance" / "wp7" / "model_generation_candidate.json").exists()
+    first_bytes = Path(first["candidate_path"]).read_bytes()
+
+    second = wp7.write_generation_artifacts(result, tmp_path)
+    assert second["generation_id"] == first["generation_id"]
+    assert second["written"]["model_generation_candidate"] == "verify_and_reuse"
+    assert Path(first["candidate_path"]).read_bytes() == first_bytes
+
+    # A different producing commit is a different generation; the new candidate
+    # must be a separate file and the previous candidate must remain untouched.
+    changed = _result_stub(commit="b" * 40)
+    changed["predictions"] = result["predictions"]
+    changed["metrics"] = {}
+    changed["multiple_testing"] = {}
+    changed["control_evidence"] = {}
+    changed["robustness"] = {}
+    changed["controls"] = []
+    changed["overall_stop"] = {"stop": False, "mandatory_failing_controls": []}
+    changed["selected_models_by_fold"] = result["selected_models_by_fold"]
+
+    third = wp7.write_generation_artifacts(changed, tmp_path)
+    assert third["generation_id"] != first["generation_id"]
+    assert third["candidate_path"] != first["candidate_path"]
+    assert Path(first["candidate_path"]).read_bytes() == first_bytes
+
+
+# --------------------------------------------------------------------------
+# index-keyed generation correction resolver
+# --------------------------------------------------------------------------
+
+
+def _write_wp7_correction_fixture(root, canonical="generation_aaaaaaaaaaaa"):
+    (root / "corrections").mkdir(parents=True, exist_ok=True)
+    canonical_path = root / "candidates" / ("zzz_%s.json" % canonical)
+    canonical_path.parent.mkdir(parents=True, exist_ok=True)
+    canonical_path.write_text(json.dumps({
+        "generation_id": canonical,
+        "canonical_generation_id": canonical,
+    }), encoding="utf-8")
+
+    misbound = "generation_04b8e2810b50"
+    supersession = {
+        "schema_version": wpc7.WP7_SUPERSESSION_SCHEMA_VERSION,
+        "old_generation_id": misbound,
+        "new_generation_id": canonical,
+        "misbound_producing_commit": "f" * 40,
+        "corrected_producing_commit": "a" * 40,
+        "canonical_ref": str(canonical_path),
+    }
+    (root / "corrections" / ("aaa_supersession_%s.json" % misbound)).write_text(
+        json.dumps(supersession), encoding="utf-8"
+    )
+
+    index = {
+        "schema_version": wpc7.WP7_CORRECTION_INDEX_SCHEMA_VERSION,
+        "canonical_generation_id": canonical,
+        "canonical_candidate_path": str(canonical_path),
+        "entries": {
+            misbound: {
+                "status": wpc7.MISBOUND_WITHDRAWN_STATUS,
+                "supersession_file": "aaa_supersession_%s.json" % misbound,
+            },
+            canonical: {"status": wpc7.CANONICAL_STATUS},
+        },
+    }
+    (root / "corrections" / "index.json").write_text(json.dumps(index), encoding="utf-8")
+    return root / "corrections", misbound, canonical, canonical_path
+
+
+def test_resolver_uses_index_id_keyed_canonical_resolution(tmp_path):
+    corrections, misbound, canonical, canonical_path = _write_wp7_correction_fixture(
+        tmp_path
+    )
+
+    resolved = wpc7.resolve_generation(misbound, root=corrections)
+    assert resolved["canonical"] is False
+    assert resolved["canonical_generation_id"] == canonical
+    assert resolved["status"] == wpc7.MISBOUND_WITHDRAWN_STATUS
+    assert resolved["misbound_producing_commit"] == "f" * 40
+
+    canonical_resolved = wpc7.resolve_generation(canonical, root=corrections)
+    assert canonical_resolved["canonical"] is True
+    assert canonical_resolved["canonical_generation_id"] == canonical
+    assert wpc7.canonical_generation_id(root=corrections) == canonical
+    assert wpc7.canonical_candidate_path(root=corrections) == canonical_path
+    # The deliberately misleading canonical filename proves resolution is not
+    # inferred from directory ordering.
+    assert wpc7.canonical_candidate_path(root=corrections).name == "zzz_%s.json" % canonical
+
