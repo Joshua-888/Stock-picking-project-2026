@@ -1,0 +1,12 @@
+{
+  "schema_version": "wp7_model_generation_candidate_supersession_v1",
+  "old_generation_id": "generation_481f16d3a44b",
+  "new_generation_id": "generation_de0f9bbd0bec",
+  "reason": "Auditor A1: v5 noise/shuffled control estimator fit used placebo_seed instead of frozen model_seed; superseded by corrected control-seed execution under unchanged contract v5",
+  "preserved_unchanged": true,
+  "superseded_records": [
+    "provenance/wp7/candidates/generation_481f16d3a44b.json"
+  ],
+  "canonical_ref": "provenance/wp7/candidates/generation_de0f9bbd0bec.json",
+  "created_before_results": true
+}

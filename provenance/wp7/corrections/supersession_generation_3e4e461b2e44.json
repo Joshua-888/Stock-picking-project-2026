@@ -1,12 +1,12 @@
 {
   "schema_version": "wp7_model_generation_candidate_supersession_v1",
   "old_generation_id": "generation_3e4e461b2e44",
-  "new_generation_id": "generation_481f16d3a44b",
+  "new_generation_id": "generation_de0f9bbd0bec",
   "reason": "superseded by v5 model-science remediation (real complexity baseline, complete freeze record, metric comparators, scientific noise control)",
   "preserved_unchanged": true,
   "superseded_records": [
     "provenance/wp7/candidates/generation_3e4e461b2e44.json"
   ],
-  "canonical_ref": "provenance/wp7/candidates/generation_481f16d3a44b.json",
+  "canonical_ref": "provenance/wp7/candidates/generation_de0f9bbd0bec.json",
   "created_before_results": true
 }
