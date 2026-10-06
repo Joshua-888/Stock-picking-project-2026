@@ -1,1 +1,18 @@
-{"canonical_candidate_path":"provenance/wp7/candidates/generation_3e4e461b2e44.json","canonical_generation_id":"generation_3e4e461b2e44","entries":{"generation_04b8e2810b50":{"canonical_candidate_path":"provenance/wp7/candidates/generation_3e4e461b2e44.json","canonical_generation_id":"generation_3e4e461b2e44","status":"MISBOUND_WITHDRAWN_NON_CANONICAL","supersession_file":"supersession_generation_04b8e2810b50.json"},"generation_3e4e461b2e44":{"canonical_candidate_path":"provenance/wp7/candidates/generation_3e4e461b2e44.json","canonical_generation_id":"generation_3e4e461b2e44","status":"canonical"}},"schema_version":"wp7_generation_correction_index_v1"}
+{
+  "schema_version": "wp7_generation_correction_index_v1",
+  "canonical_generation_id": "generation_481f16d3a44b",
+  "canonical_candidate_path": "provenance/wp7/candidates/generation_481f16d3a44b.json",
+  "entries": {
+    "generation_04b8e2810b50": {
+      "status": "MISBOUND_WITHDRAWN_NON_CANONICAL",
+      "supersession_file": "supersession_generation_04b8e2810b50.json"
+    },
+    "generation_3e4e461b2e44": {
+      "status": "SUPERSEDED_WITHDRAWN_NON_CANONICAL",
+      "supersession_file": "supersession_generation_3e4e461b2e44.json"
+    },
+    "generation_481f16d3a44b": {
+      "status": "canonical"
+    }
+  }
+}
