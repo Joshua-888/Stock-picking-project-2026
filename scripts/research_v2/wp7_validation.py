@@ -863,7 +863,7 @@ def _noise_feature_names(n_features, prefix="__noise_control"):
 
 
 def _run_negative_controls_for_fold(evaluated, fold_frames, safe_folds, candidate,
-                                    seed, contract):
+                                    control_seed, estimator_seed, contract):
     real_skill = evaluated["mean_auc_skill"]
     shuffled_skills, noise_skills = [], []
     spec = None if candidate.model == "baseline_base_rate" else \
@@ -875,13 +875,14 @@ def _run_negative_controls_for_fold(evaluated, fold_frames, safe_folds, candidat
             candidate.strategy, train_frame, contract
         )
         shuffled_train = shuffle_training_target(
-            train_frame, target=TARGET, seed=int(seed), asof_col="modeling_month"
+            train_frame, target=TARGET, seed=int(control_seed), asof_col="modeling_month"
         )
         if candidate.model == "baseline_base_rate":
             shuffled_outcome = _baseline_predict(shuffled_train, val_frame)
         else:
             shuffled_outcome, _fit, _used = _preprocess_train_predict(
-                shuffled_train, val_frame, spec, candidate.params, seed, features
+                shuffled_train, val_frame, spec, candidate.params, estimator_seed,
+                features
             )
         skill, _series = _mean_auc_skill_from_outcomes([shuffled_outcome])
         if skill is not None:
@@ -889,8 +890,9 @@ def _run_negative_controls_for_fold(evaluated, fold_frames, safe_folds, candidat
 
         # v5 noise-feature control: K_f independent standard-normal columns
         # replace ALL selected real features on this inner train fold. The same
-        # selected estimator/params and VALUE_SPEC preprocessing are reused.
-        noise_seed = int(seed) + 1000 + int(fold.fold)
+        # selected estimator/params, VALUE_SPEC preprocessing, and model_seed are
+        # reused; only the noise columns are generated with the control seed.
+        noise_seed = int(control_seed) + 1000 + int(fold.fold)
         noise_features = _noise_feature_names(len(features))
         noisy_train = _noise_only_features(train_frame, noise_seed, len(features))
         noisy_val = _noise_only_features(val_frame, noise_seed, len(features))
@@ -898,7 +900,8 @@ def _run_negative_controls_for_fold(evaluated, fold_frames, safe_folds, candidat
             noisy_outcome = _baseline_predict(noisy_train, noisy_val)
         else:
             noisy_outcome, _fit, _used = _preprocess_train_predict(
-                noisy_train, noisy_val, spec, candidate.params, seed, noise_features
+                noisy_train, noisy_val, spec, candidate.params, estimator_seed,
+                noise_features
             )
         skill, _series = _mean_auc_skill_from_outcomes([noisy_outcome])
         if skill is not None:
@@ -1180,7 +1183,8 @@ def run_pre_holdout_validation(frame, contract=None, commit=None, holdout=None):
         outer_metrics = _outer_metrics(outer_outcome, final_train)
         negative = _run_negative_controls_for_fold(
             selected_evaluation, fold_frames, safe_folds, selected_config,
-            int(contract["seeds"]["placebo_seed"]), contract
+            int(contract["seeds"]["placebo_seed"]),
+            int(contract["seeds"]["model_seed"]), contract
         )
         negative["window_id"] = window["window_id"]
         negative["matched_real_config_id"] = selected_config.config_id

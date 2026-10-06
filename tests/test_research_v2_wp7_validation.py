@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -461,6 +462,78 @@ def test_shuffled_target_control_permutes_within_the_cross_section(panel):
         original = sorted(train.loc[train["modeling_month"] == month, wp7.TARGET])
         permuted = sorted(shuffled.loc[shuffled["modeling_month"] == month, wp7.TARGET])
         assert original == permuted
+
+
+def test_negative_control_uses_control_seed_for_perturbation_and_model_seed_for_fit(
+    monkeypatch, contract
+):
+    """Auditor A1 regression: negative-control estimator fitting must use the
+    frozen model_seed (same as the matched per-outer-fold real estimator), while
+    target permutation and noise generation use the frozen placebo/noise seeds.
+    """
+    estimator_seeds = []
+    permutation_seeds = []
+    noise_generation_seeds = []
+
+    frame = pd.DataFrame({
+        "modeling_month": ["2009-01", "2009-01", "2009-02", "2009-02"],
+        "feature_asof": ["2009-01-31"] * 4,
+        "security_id": ["A", "B", "C", "D"],
+        wp7.TARGET: [1.0, 0.0, 1.0, 0.0],
+    })
+    safe_folds = [SimpleNamespace(fold=3), SimpleNamespace(fold=5)]
+    fold_frames = {
+        fold.fold: {"train": frame, "validation": frame}
+        for fold in safe_folds
+    }
+    evaluated = {"mean_auc_skill": 0.20}
+    candidate = wp7.parse_frozen_configs(contract)[1]
+
+    monkeypatch.setattr(
+        wp7, "_feature_names_from_strategy",
+        lambda strategy, train_frame, contract_obj: (["roa"], {"basis": "test"}),
+    )
+    monkeypatch.setattr(
+        wp7, "shuffle_training_target",
+        lambda train_frame, target, seed, asof_col: (
+            permutation_seeds.append(int(seed)) or train_frame.copy()
+        ),
+    )
+    monkeypatch.setattr(
+        wp7, "_noise_only_features",
+        lambda frame_obj, seed, n_features, prefix="__noise_control": (
+            noise_generation_seeds.append(int(seed)) or frame_obj.copy()
+        ),
+    )
+    monkeypatch.setattr(wp7, "_mean_auc_skill_from_outcomes", lambda outcomes: (0.02, None))
+    monkeypatch.setattr(
+        wp7, "_preprocess_train_predict",
+        lambda train_frame, val_frame, spec, params, seed, features, extra_features=(): (
+            estimator_seeds.append(int(seed))
+            or (wp7.outcome_frame(val_frame, np.full(len(val_frame), 0.5)), None, features)
+        ),
+    )
+
+    result = wp7._run_negative_controls_for_fold(
+        evaluated, fold_frames, safe_folds, candidate,
+        control_seed=int(contract["seeds"]["placebo_seed"]),
+        estimator_seed=int(contract["seeds"]["model_seed"]),
+        contract=contract,
+    )
+
+    assert result["shuffled_fold_skills"] == [0.02, 0.02]
+    assert result["noise_fold_skills"] == [0.02, 0.02]
+    assert permutation_seeds == [20260926, 20260926]
+    # _noise_only_features is applied independently to train and validation
+    # frames for each safe fold, so each fold's control noise seed appears twice.
+    assert noise_generation_seeds == [
+        20260926 + 1000 + 3,
+        20260926 + 1000 + 3,
+        20260926 + 1000 + 5,
+        20260926 + 1000 + 5,
+    ]
+    # shuffled-target and noise-feature estimator fits are both model-seeded.
+    assert estimator_seeds == [20260930, 20260930, 20260930, 20260930]
 
 
 @pytest.fixture(scope="module")
