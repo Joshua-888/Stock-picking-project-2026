@@ -1,0 +1,11 @@
+{
+  "schema_version": "wp7_validation_contract_supersession_v1",
+  "old_contract_version": "WP7_VALIDATION_CONTRACT_V4",
+  "old_contract_file": "provenance/wp7/validation_contract_v4.json",
+  "new_contract_version": "WP7_VALIDATION_CONTRACT_V5",
+  "new_contract_file": "provenance/wp7/validation_contract_v5.json",
+  "status": "SUPERSEDED",
+  "preserved_unchanged": true,
+  "created_before_results": true,
+  "reason": "v4 noise-feature control criterion was too vague/post-hoc; v5 adds exact deterministic negative_controls_spec. No other scientific inputs change."
+}

@@ -1,9 +1,10 @@
 """WP7 pre-holdout validation tests (synthetic fixtures only; no research data).
 
 These tests prove the WP7 engine honours the frozen
-``WP7_VALIDATION_CONTRACT_V4`` geometry, purge semantics, train-only fitting,
-determinism, negative-control STOP reachability, and provenance binding. No
-locked-holdout row, label, or metric is ever constructed or read here.
+``WP7_VALIDATION_CONTRACT_V5`` geometry, purge semantics, train-only fitting,
+determinism, v5 scientific noise-feature control, robustness baselines, and
+provenance binding. No locked-holdout row, label, or metric is ever constructed
+or read here.
 """
 
 from __future__ import annotations
@@ -76,11 +77,37 @@ def panel():
 # --------------------------------------------------------------------------
 
 
-def test_contract_is_v4_classification_only(contract):
-    assert contract["contract_version"] == "WP7_VALIDATION_CONTRACT_V4"
+def test_contract_is_v5_classification_only(contract):
+    assert contract["contract_version"] == "WP7_VALIDATION_CONTRACT_V5"
+    assert contract["schema_version"] == "wp7_validation_contract_v5"
+    assert contract["supersedes_contract_version"] == "WP7_VALIDATION_CONTRACT_V4"
     assert contract["eligible_task"]["task"] == "classification"
     assert contract["eligible_task"]["regression"]["eligible"] is False
     assert contract["target"] == "outperform_12m"
+
+def test_contract_v5_keeps_min_train_and_exact_negative_controls_spec(contract):
+    assert contract["inner_walk_forward_design"]["min_train_months"] == 37
+    assert contract["inner_walk_forward_design"]["min_folds"] == 4
+    spec = contract["negative_controls_spec"]["noise_feature_classification"]
+    assert spec == {
+        "scope": "train/inner-only",
+        "perturbation": "replace_all_selected_real_features_with_independent_standard_normal_noise",
+        "noise_feature_count": "selected real feature count per inner train fold",
+        "noise_seed": "placebo_seed + 1000 + inner_fold_id",
+        "matching_rule": "same selected per-outer-fold model/params/VALUE_SPEC/model_seed/same safe inner fold geometry",
+        "reference_statistic": "noise_only_model_mean_inner_auc_skill",
+        "null": "H0: mean(AUC_skill_t) <= 0",
+        "test": "one_sample_one_sided_upper_t_test",
+        "alpha": 0.05,
+        "min_folds": 4,
+        "fail_closed_if_missing": True,
+        "failure_condition": "n_folds < 4 OR (control_metric > 0 AND one_sided_p_value < alpha)",
+        "forbidden": [
+            "abs(real_metric)",
+            "max(abs(real_metric), fixed_floor)",
+            "post-hoc max-abs reference selection",
+        ],
+    }
 
 
 def test_eligible_model_set_is_the_frozen_baseline_plus_nine(contract):
@@ -399,13 +426,27 @@ def test_missing_control_metric_fails_closed():
 
 
 def test_control_battery_blocks_wp7_when_a_mandatory_control_fails():
-    failing = [{"real_skill": 0.01, "shuffled_skill": 0.40, "noise_skill": 0.001}]
+    failing = [{
+        "real_skill": 0.01,
+        "shuffled_skill": 0.40,
+        "noise_skill": 0.001,
+        "noise_fold_skills": [-0.01, -0.02, -0.03, -0.04],
+        "window_id": "outer_test_1",
+        "matched_real_config_id": "cfg_a",
+    }]
     controls, stop, evidence = wp7.build_negative_controls(failing)
     assert stop["stop"] is True
     assert "shuffled_target_classification" in stop["mandatory_failing_controls"]
     assert evidence["shuffled_skill_mean"] == 0.40
+    noise = [item for item in controls if item["control_id"] == "noise_feature_classification"][0]
+    assert noise["passed"] is True
 
-    passing = [{"real_skill": 0.02, "shuffled_skill": 0.002, "noise_skill": 0.003}]
+    passing = [{
+        "real_skill": 0.02,
+        "shuffled_skill": 0.002,
+        "noise_skill": 0.003,
+        "noise_fold_skills": [-0.01, -0.02, -0.03, -0.04],
+    }]
     controls, stop, _evidence = wp7.build_negative_controls(passing)
     assert stop["stop"] is False
     assert all(item["mandatory"] for item in controls)
@@ -420,6 +461,100 @@ def test_shuffled_target_control_permutes_within_the_cross_section(panel):
         original = sorted(train.loc[train["modeling_month"] == month, wp7.TARGET])
         permuted = sorted(shuffled.loc[shuffled["modeling_month"] == month, wp7.TARGET])
         assert original == permuted
+
+
+@pytest.fixture(scope="module")
+def noise_spec(contract):
+    return contract["negative_controls_spec"]["noise_feature_classification"]
+
+
+def test_v5_noise_control_pass_is_reachable_without_real_metric(noise_spec):
+    skills = [-0.01, -0.02, -0.03, -0.04]
+    control = wp7.evaluate_noise_feature_control(
+        skills,
+        spec=noise_spec,
+        matched_real_config_id="cfg_real",
+        matched_real_config_ids_by_fold={"outer_test_1": "cfg_real"},
+    )
+    assert control["real_metric"] is None
+    assert control["control_metric"] == pytest.approx(float(np.mean(skills)))
+    assert control["passed"] is True
+    assert control["stop_required"] is False
+    assert control["reason"] == "noise-only skill is consistent with the null"
+    assert control["matched_real_config_id"] == "cfg_real"
+    assert control["matched_real_config_ids_by_fold"] == {"outer_test_1": "cfg_real"}
+    assert control["extra"]["selected_config_ids_by_fold"] == {"outer_test_1": "cfg_real"}
+
+
+def test_v5_noise_control_stop_is_reachable_without_real_metric(noise_spec):
+    skills = [0.20, 0.21, 0.19, 0.22]
+    control = wp7.evaluate_noise_feature_control(skills, spec=noise_spec)
+    assert control["real_metric"] is None
+    assert control["control_metric"] == pytest.approx(float(np.mean(skills)))
+    assert control["passed"] is False
+    assert control["stop_required"] is True
+    from scipy import stats
+    expected_p = float(stats.t.sf(control["t_stat"], df=3))
+    assert control["p_value"] == pytest.approx(expected_p)
+    assert control["p_value"] < noise_spec["alpha"]
+
+
+def test_v5_noise_control_fails_closed_on_missing_or_insufficient_folds(noise_spec):
+    missing = wp7.evaluate_noise_feature_control(
+        [-0.05, None, -0.03, -0.04], spec=noise_spec
+    )
+    assert missing["n_folds"] == 3
+    assert missing["reason"] == "insufficient_noise_control_folds"
+    assert missing["passed"] is False
+    assert missing["stop_required"] is True
+
+    short = wp7.evaluate_noise_feature_control([0.05, 0.06, 0.07], spec=noise_spec)
+    assert short["n_folds"] == 3
+    assert short["passed"] is False
+    assert short["stop_required"] is True
+
+
+def test_v5_noise_control_is_independent_of_observed_real_skill(noise_spec):
+    base = {
+        "shuffled_skill": 0.0,
+        "noise_skill": -0.02,
+        "noise_fold_skills": [-0.01, -0.02, -0.03, -0.04],
+        "window_id": "outer_test_1",
+        "matched_real_config_id": "cfg_a",
+    }
+    small_real = wp7.evaluate_noise_feature_control(
+        base["noise_fold_skills"],
+        spec=noise_spec,
+        matched_real_config_id="cfg_a",
+        matched_real_config_ids_by_fold={"outer_test_1": "cfg_a"},
+    )
+    large_real = wp7.evaluate_noise_feature_control(
+        base["noise_fold_skills"],
+        spec=noise_spec,
+        matched_real_config_id="cfg_b",
+        matched_real_config_ids_by_fold={"outer_test_1": "cfg_b"},
+    )
+    for key in ("control_metric", "t_stat", "p_value", "passed", "stop_required"):
+        assert large_real[key] == small_real[key]
+
+
+def test_v5_mandatory_noise_failure_blocks_battery(noise_spec):
+    records = [{
+        "real_skill": 0.50,
+        "shuffled_skill": 0.001,
+        "noise_skill": 0.20,
+        "noise_fold_skills": [0.20, 0.21, 0.19, 0.22],
+        "window_id": "outer_test_1",
+        "matched_real_config_id": "cfg_a",
+    }]
+    controls, stop, _evidence = wp7.build_negative_controls(records)
+    assert stop["stop"] is True
+    assert "noise_feature_classification" in stop["mandatory_failing_controls"]
+    noise = [item for item in controls if item["control_id"] == "noise_feature_classification"][0]
+    assert noise["passed"] is False
+    assert noise["matched_real_config_id"] == "cfg_a"
+    assert noise["matched_real_config_ids_by_fold"] == {"outer_test_1": "cfg_a"}
+    assert noise["extra"]["selected_config_ids_by_fold"] == {"outer_test_1": "cfg_a"}
 
 
 # --------------------------------------------------------------------------
@@ -526,6 +661,218 @@ def test_robustness_report_covers_every_frozen_requirement(contract):
     assert len(requirements) == 8
 
 
+def _outer_records_for_complexity(auc_skills, brier_skills):
+    return [
+        {
+            "window_id": "outer_test_%d" % index,
+            "selected_config_id": "cfg_%d" % index,
+            "selected_calibration": "none",
+            "selected_params": {"max_depth": 4},
+            "outer_metrics": {
+                "mean_auc_skill": auc_skills[index - 1],
+                "brier_skill_vs_train_base_rate": brier_skills[index - 1],
+            },
+        }
+        for index in range(1, 5)
+    ]
+
+
+def test_complexity_baseline_positive_evidence_and_serialized_shape():
+    outer_records = _outer_records_for_complexity(
+        [0.01, 0.02, 0.03, 0.04], [0.02, 0.03, 0.04, 0.05]
+    )
+    selected_models = {
+        item["window_id"]: {"features": ["roa", "roe"]} for item in outer_records
+    }
+    report = wp7._robustness_report(outer_records, selected_models)
+    complexity = report["complexity_vs_simple_baseline"]
+
+    assert complexity["baseline_model"] == "baseline_base_rate"
+    assert complexity["scope"] == "development_outer_test_windows_only"
+    assert complexity["baseline_auc_skill_reference"] == 0.0
+    assert complexity["baseline_brier_skill_reference"] == 0.0
+    assert len(complexity["per_fold"]) == 4
+    for fold in complexity["per_fold"]:
+        assert fold["baseline_auc_skill"] == 0.0
+        assert fold["baseline_brier_skill"] == 0.0
+        assert fold["auc_skill_excess"] == fold["selected_auc_skill"] - 0.0
+        assert fold["brier_skill_excess"] == fold["selected_brier_skill"] - 0.0
+    metrics = complexity["aggregate"]
+    assert metrics["mean_auc_skill_excess"] == pytest.approx(0.025)
+    assert metrics["mean_brier_skill_excess"] == pytest.approx(0.035)
+    assert metrics["positive_fold_fraction_auc"] == 1.0
+    assert metrics["positive_fold_fraction_brier"] == 1.0
+    assert complexity["complexity_evidence"] == "positive"
+    assert complexity["influence_on_selection_calibration_or_stop"] == "none (descriptive only)"
+
+
+def test_complexity_baseline_negative_and_mixed_evidence():
+    negative = wp7._robustness_report(
+        _outer_records_for_complexity(
+            [-0.01, -0.02, -0.03, -0.04], [-0.02, -0.03, -0.04, -0.05]
+        ),
+        {},
+    )["complexity_vs_simple_baseline"]
+    assert negative["complexity_evidence"] == "negative"
+
+    mixed = wp7._robustness_report(
+        _outer_records_for_complexity(
+            [0.01, 0.02, 0.03, 0.04], [-0.02, -0.03, -0.04, -0.05]
+        ),
+        {},
+    )["complexity_vs_simple_baseline"]
+    assert mixed["complexity_evidence"] == "mixed"
+
+
+def test_complexity_baseline_is_descriptive_only_and_does_not_mutate_inputs():
+    outer_records = _outer_records_for_complexity(
+        [0.01, 0.02, 0.03, 0.04], [0.02, 0.03, 0.04, 0.05]
+    )
+    selected_models = {
+        item["window_id"]: {"features": ["roa", "roe"]} for item in outer_records
+    }
+    original_outer = json.loads(json.dumps(outer_records))
+    original_selected = json.loads(json.dumps(selected_models))
+    report = wp7._robustness_report(outer_records, selected_models)
+    assert report["complexity_vs_simple_baseline"][
+        "influence_on_selection_calibration_or_stop"] == "none (descriptive only)"
+    assert outer_records == original_outer
+    assert selected_models == original_selected
+
+
+def _outer_metrics_fixture():
+    outer = pd.DataFrame({
+        "modeling_month": ["2017-01"] * 4,
+        "prediction": [0.9, 0.1, 0.8, 0.2],
+        "actual": [1.0, 0.0, 1.0, 0.0],
+        "security_id": ["a", "b", "c", "d"],
+        "feature_asof": ["2017-01-31"] * 4,
+    })
+    train = pd.DataFrame({"outperform_12m": [0.0, 0.0, 1.0, 1.0, 1.0]})
+    return outer, train
+
+
+def test_outer_metrics_v5_metric_formulas_and_directions_are_deterministic():
+    outer, train = _outer_metrics_fixture()
+    metrics = wp7._outer_metrics(outer, train)
+
+    assert metrics["pooled_metrics"]["roc_auc"] == pytest.approx(1.0)
+    assert metrics["pooled_metrics"]["pr_auc"] == pytest.approx(1.0)
+    assert metrics["pooled_metrics"]["log_loss"] == pytest.approx(0.164252033486018)
+    assert metrics["pooled_metrics"]["brier"] == pytest.approx(0.025)
+    assert metrics["train_base_rate"] == pytest.approx(0.6)
+
+    assert metrics["pr_auc_skill_vs_train_prevalence"] == pytest.approx(0.4)
+    assert metrics["pr_auc_skill_skipped_reason"] is None
+    assert metrics["log_loss_benchmark_train_base_rate"] == pytest.approx(
+        0.7135581778200728
+    )
+    assert metrics["log_loss_skill_vs_train_base_rate"] == pytest.approx(
+        0.5493061443340548
+    )
+    assert metrics["brier_skill_vs_train_base_rate"] == pytest.approx(0.235)
+
+    assert metrics["metric_direction"] == {
+        "roc_auc": "higher",
+        "pr_auc": "higher",
+        "pr_auc_skill_vs_train_prevalence": "higher",
+        "brier": "lower",
+        "brier_skill_vs_train_base_rate": "higher",
+        "log_loss": "lower",
+        "log_loss_benchmark_train_base_rate": "lower",
+        "log_loss_skill_vs_train_base_rate": "higher",
+    }
+
+
+def test_summary_and_metrics_artifacts_serialize_identical_outer_metrics(tmp_path):
+    result = _result_stub()
+    outer, train = _outer_metrics_fixture()
+    result["outer_folds"][0]["outer_metrics"] = wp7._outer_metrics(outer, train)
+    result["predictions"] = {"phase": "wp7_pre_holdout", "rows": []}
+    result["multiple_testing"] = {}
+    result["control_evidence"] = {}
+    result["robustness"] = {}
+
+    written = wp7.write_generation_artifacts(result, tmp_path)
+    summary = json.loads((Path(written["artifact_dir"]) / "summary.json").read_text())
+    metrics = json.loads((Path(written["artifact_dir"]) / "metrics.json").read_text())
+
+    original_fold = result["outer_folds"][0]
+    assert summary["outer_folds"][0]["outer_metrics"] == \
+        metrics["outer_folds"][0]["outer_metrics"] == original_fold["outer_metrics"]
+    assert summary["outer_folds"][0]["inner_selection_table"] == \
+        metrics["outer_folds"][0]["inner_selection_table"]
+
+
+def test_candidate_v2_schema_and_artifact_digests_recompute(tmp_path):
+    result = _result_stub()
+    result["predictions"] = {"phase": "wp7_pre_holdout", "rows": []}
+    result["multiple_testing"] = {}
+    result["control_evidence"] = {}
+    result["robustness"] = {}
+
+    written = wp7.write_generation_artifacts(result, tmp_path)
+    candidate = json.loads(Path(written["candidate_path"]).read_text())
+
+    assert candidate["schema_version"] == "wp7_model_generation_candidate_v2"
+    required = [
+        "dataset_id", "target_set_id", "feature_set_id", "wp6_experiment_id",
+        "seeds", "producing_commit", "contract_version", "contract_digest",
+        "contract_file", "contract_markdown_file", "canonical_holdout_id",
+        "frozen_at_stage", "status", "selected_models_by_fold",
+        "training_procedure", "artifact_binding",
+        "outer_fold_evaluation_evidence", "limitations", "holdout_usage",
+        "holdout_performance_accessed", "holdout_labels_accessed",
+        "holdout_rows_accessed",
+    ]
+    for key in required:
+        assert key in candidate
+
+    seeds = candidate["seeds"]
+    assert seeds["model_seed"] == result["seed"] == 20260930
+    assert seeds["bootstrap_seed"] == 20260926
+    assert seeds["placebo_seed"] == 20260926
+    assert candidate["holdout_usage"] == "none"
+    assert candidate["holdout_performance_accessed"] is False
+    assert candidate["holdout_labels_accessed"] is False
+    assert candidate["holdout_rows_accessed"] is False
+
+    selected = candidate["selected_models_by_fold"]["outer_test_1"]
+    likely_selected_keys = [
+        "config_id", "model", "strategy", "preprocessing", "params", "calibration",
+        "features", "selected_features_source", "feature_evidence",
+        "mean_auc_skill", "selection_deterministic_tie_break",
+    ]
+    for key in likely_selected_keys:
+        assert key in selected
+    assert selected["selected_features_source"] == "train_only"
+    assert selected["strategy"] in ("B_coverage_qualified", "F_economic_family_representatives")
+    assert all(name in model_feature_universe() for name in selected["features"])
+    assert isinstance(selected["params"], dict)
+
+    # The compact candidate must not duplicate full predictions/metrics/tables.
+    for forbidden in ("predictions", "full_predictions", "full_metrics",
+                      "inner_selection_table"):
+        assert forbidden not in candidate
+
+    artifact_root = Path(written["artifact_dir"])
+    for name in ("summary.json", "decision.json", "predictions.json", "metrics.json",
+                 "controls.json", "robustness.json", "ledger.jsonl"):
+        path = artifact_root / name
+        assert path.is_file()
+        assert candidate["artifact_binding"][name]["path"] == str(path)
+        assert candidate["artifact_binding"][name]["sha256_prefix"] == \
+            wp7._sha256_prefix(path)
+
+
+def test_no_stale_v3_version_strings_in_wp7_engine():
+    source = WP7_SCRIPT.read_text(encoding="utf-8")
+    for forbidden in ("WP7_VALIDATION_CONTRACT_V3",
+                      "WP7 v3 eligible task/target mismatch",
+                      "validation_contract_v3.json"):
+        assert forbidden not in source
+
+
 # --------------------------------------------------------------------------
 # provenance binding / immutability
 # --------------------------------------------------------------------------
@@ -568,7 +915,22 @@ def _result_stub(status="WP7_PRE_HOLDOUT_READY", commit="a" * 40):
                 "outer_metrics": {"mean_auc_skill": 0.005},
             }
         ],
-        "selected_models_by_fold": {"outer_test_1": {"config_id": "modelcfg_00c68894e319"}},
+        "selected_models_by_fold": {
+            "outer_test_1": {
+                "config_id": "modelcfg_00c68894e319",
+                "model": "hist_gradient_boosting",
+                "strategy": "F_economic_family_representatives",
+                "preprocessing": ["VALUE_SPEC"],
+                "params": {"max_depth": 3},
+                "calibration": "none",
+                "features": ["roa", "roe"],
+                "selected_features_source": "train_only",
+                "feature_evidence": {"basis": "train_coverage>=0.35"},
+                "mean_auc_skill": 0.01,
+                "selection_deterministic_tie_break":
+                    "smaller hyperparameter complexity, then deterministic config_id order",
+            }
+        },
         "controls": [],
         "overall_stop": {"stop": False, "mandatory_failing_controls": []},
         "limitations": ["selection-adjusted nested estimate"],

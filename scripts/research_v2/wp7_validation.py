@@ -1,6 +1,6 @@
 """WP7 PRE-HOLDOUT nested walk-forward validation engine.
 
-Deterministic implementation of ``provenance/wp7/validation_contract_v4.json``.
+Deterministic implementation of ``provenance/wp7/validation_contract_v5.json``.
 The engine is development-only and never accesses locked-holdout performance,
 labels, or any row whose ``feature_asof >= 2021-01-01``.
 
@@ -50,8 +50,8 @@ from src.research.modeling.placebo import control_object, overall_stop
 from src.research.modeling.placebo import shuffle_training_target
 from src.research.modeling.preprocessing import PreprocessingSpec, Preprocessor
 
-CONTRACT_REL = Path("provenance") / "wp7" / "validation_contract_v4.json"
-CONTRACT_MD_REL = Path("docs") / "research_v2" / "wp7_validation_contract_v4.md"
+CONTRACT_REL = Path("provenance") / "wp7" / "validation_contract_v5.json"
+CONTRACT_MD_REL = Path("docs") / "research_v2" / "wp7_validation_contract_v5.md"
 CANONICAL_HOLDOUT_ID = "holdout_7ce54e933e16"
 GENERATION_KIND = "wp7_model_generation_candidate"
 MODEL_CANDIDATE_DIR_REL = Path("provenance") / "wp7" / "candidates"
@@ -93,7 +93,7 @@ def _is_producing_code_path(path):
     normalized = path.replace("\\", "/")
     if normalized == "scripts/research_v2/wp7_validation.py":
         return True
-    if normalized == "provenance/wp7/validation_contract_v4.json":
+    if normalized == "provenance/wp7/validation_contract_v5.json":
         return True
     return normalized.startswith("src/research/") or normalized.startswith(
         "scripts/research_v2/"
@@ -646,6 +646,44 @@ def _outer_metrics(outer_outcome, outer_train):
     )
     auc = series_auc["auc"].to_numpy(dtype="float64") if len(series_auc) else np.array([])
     skill = auc - 0.5 if len(auc) else np.array([])
+
+    y = pd.to_numeric(outer_outcome["actual"], errors="coerce").to_numpy(dtype="float64")
+    prediction = np.asarray(outer_outcome["prediction"], dtype="float64")
+    mask = np.isfinite(y) & np.isfinite(prediction)
+    y_finite = y[mask]
+
+    raw_pr_auc = pooled.get("pr_auc")
+    pr_auc_skill = None
+    pr_auc_skill_skipped_reason = None
+    if raw_pr_auc is not None and base_rate is not None:
+        pr_auc_skill = float(raw_pr_auc - base_rate)
+    elif raw_pr_auc is None:
+        pr_auc_skill_skipped_reason = "single_class"
+
+    log_loss_benchmark_train_base_rate = None
+    if base_rate is not None and len(y_finite) > 0:
+        benchmark_base = float(np.clip(base_rate, 1e-9, 1 - 1e-9))
+        log_loss_benchmark_train_base_rate = float(-np.mean(
+            y_finite * np.log(benchmark_base)
+            + (1.0 - y_finite) * np.log(1.0 - benchmark_base)
+        ))
+    raw_log_loss = pooled.get("log_loss")
+    log_loss_skill_vs_train_base_rate = None
+    if raw_log_loss is not None and log_loss_benchmark_train_base_rate is not None:
+        log_loss_skill_vs_train_base_rate = float(
+            log_loss_benchmark_train_base_rate - raw_log_loss
+        )
+
+    metric_direction = {
+        "roc_auc": "higher",
+        "pr_auc": "higher",
+        "pr_auc_skill_vs_train_prevalence": "higher",
+        "brier": "lower",
+        "brier_skill_vs_train_base_rate": "higher",
+        "log_loss": "lower",
+        "log_loss_benchmark_train_base_rate": "lower",
+        "log_loss_skill_vs_train_base_rate": "higher",
+    }
     return {
         "pooled_metrics": pooled,
         "calibration": calibration,
@@ -660,6 +698,11 @@ def _outer_metrics(outer_outcome, outer_train):
         "brier_skill_vs_train_base_rate": None if model_brier is None or base_brier is None
         else float(base_brier - model_brier),
         "train_base_rate": base_rate,
+        "pr_auc_skill_vs_train_prevalence": pr_auc_skill,
+        "pr_auc_skill_skipped_reason": pr_auc_skill_skipped_reason,
+        "log_loss_benchmark_train_base_rate": log_loss_benchmark_train_base_rate,
+        "log_loss_skill_vs_train_base_rate": log_loss_skill_vs_train_base_rate,
+        "metric_direction": metric_direction,
     }
 
 
@@ -723,6 +766,43 @@ def _robustness_report(outer_records, selected_models):
         window_id: sorted(entry["features"])
         for window_id, entry in selected_models.items()
     }
+    complexity_folds = []
+    auc_excess, brier_excess = [], []
+    for item in outer_records:
+        metrics = item.get("outer_metrics") or {}
+        selected_auc_skill = metrics.get("mean_auc_skill")
+        selected_brier_skill = metrics.get("brier_skill_vs_train_base_rate")
+        auc_skill_excess = None if selected_auc_skill is None else float(selected_auc_skill - 0.0)
+        brier_skill_excess = None if selected_brier_skill is None else float(selected_brier_skill - 0.0)
+        if auc_skill_excess is not None:
+            auc_excess.append(auc_skill_excess)
+        if brier_skill_excess is not None:
+            brier_excess.append(brier_skill_excess)
+        complexity_folds.append({
+            "window_id": item["window_id"],
+            "selected_config_id": item["selected_config_id"],
+            "selected_auc_skill": selected_auc_skill,
+            "baseline_auc_skill": 0.0,
+            "auc_skill_excess": auc_skill_excess,
+            "selected_brier_skill": selected_brier_skill,
+            "baseline_brier_skill": 0.0,
+            "brier_skill_excess": brier_skill_excess,
+        })
+    mean_auc_skill_excess = float(np.mean(auc_excess)) if auc_excess else None
+    mean_brier_skill_excess = float(np.mean(brier_excess)) if brier_excess else None
+    positive_fold_fraction_auc = float(
+        np.mean(np.asarray(auc_excess) > 0.0)) if auc_excess else None
+    positive_fold_fraction_brier = float(
+        np.mean(np.asarray(brier_excess) > 0.0)) if brier_excess else None
+    if mean_auc_skill_excess is not None and mean_brier_skill_excess is not None:
+        if mean_auc_skill_excess > 0.0 and mean_brier_skill_excess > 0.0:
+            complexity_evidence = "positive"
+        elif mean_auc_skill_excess <= 0.0 and mean_brier_skill_excess <= 0.0:
+            complexity_evidence = "negative"
+        else:
+            complexity_evidence = "mixed"
+    else:
+        complexity_evidence = "mixed"
     return {
         "outer_fold_stability": {
             "fold_auc_skills": skills,
@@ -752,17 +832,34 @@ def _robustness_report(outer_records, selected_models):
             "unique_count": len(set(calibration_selections)),
         },
         "complexity_vs_simple_baseline": {
-            "note": "compared to baseline_base_rate on development outer_test windows",
+            "baseline_model": "baseline_base_rate",
+            "scope": "development_outer_test_windows_only",
+            "baseline_auc_skill_reference": 0.0,
+            "baseline_brier_skill_reference": 0.0,
+            "per_fold": complexity_folds,
+            "aggregate": {
+                "mean_auc_skill_excess": mean_auc_skill_excess,
+                "mean_brier_skill_excess": mean_brier_skill_excess,
+                "positive_fold_fraction_auc": positive_fold_fraction_auc,
+                "positive_fold_fraction_brier": positive_fold_fraction_brier,
+            },
+            "complexity_evidence": complexity_evidence,
+            "influence_on_selection_calibration_or_stop": "none (descriptive only)",
         },
         "negative_controls": "computed separately in controls/control_evidence",
     }
 
 
-def _noise_feature(frame, seed, name="__noise_control"):
+def _noise_only_features(frame, seed, n_features, prefix="__noise_control"):
     rng = np.random.default_rng(int(seed))
     working = frame.copy()
-    working[name] = rng.standard_normal(len(working))
+    for index in range(int(n_features)):
+        working["%s_%d" % (prefix, index)] = rng.standard_normal(len(working))
     return working
+
+
+def _noise_feature_names(n_features, prefix="__noise_control"):
+    return ["%s_%d" % (prefix, index) for index in range(int(n_features))]
 
 
 def _run_negative_controls_for_fold(evaluated, fold_frames, safe_folds, candidate,
@@ -790,14 +887,18 @@ def _run_negative_controls_for_fold(evaluated, fold_frames, safe_folds, candidat
         if skill is not None:
             shuffled_skills.append(skill)
 
-        noisy_train = _noise_feature(train_frame, int(seed) + 1)
-        noisy_val = _noise_feature(val_frame, int(seed) + 1)
-        if candidate.model == "baseline_base_rate":
+        # v5 noise-feature control: K_f independent standard-normal columns
+        # replace ALL selected real features on this inner train fold. The same
+        # selected estimator/params and VALUE_SPEC preprocessing are reused.
+        noise_seed = int(seed) + 1000 + int(fold.fold)
+        noise_features = _noise_feature_names(len(features))
+        noisy_train = _noise_only_features(train_frame, noise_seed, len(features))
+        noisy_val = _noise_only_features(val_frame, noise_seed, len(features))
+        if candidate.model == "baseline_base_rate" or not noise_features:
             noisy_outcome = _baseline_predict(noisy_train, noisy_val)
         else:
             noisy_outcome, _fit, _used = _preprocess_train_predict(
-                noisy_train, noisy_val, spec, candidate.params, seed,
-                features, extra_features=("__noise_control",),
+                noisy_train, noisy_val, spec, candidate.params, seed, noise_features
             )
         skill, _series = _mean_auc_skill_from_outcomes([noisy_outcome])
         if skill is not None:
@@ -811,7 +912,8 @@ def _run_negative_controls_for_fold(evaluated, fold_frames, safe_folds, candidat
     }
 
 
-def evaluate_negative_control(control_id, control_type, real_metric, control_metric):
+def evaluate_negative_control(control_id, control_type, real_metric, control_metric,
+                              matched_real_config_id=None):
     real_magnitude = abs(float(real_metric)) if real_metric is not None else 0.0
     threshold = max(real_magnitude, CONTROL_SKILL_FLOOR)
     if control_metric is None:
@@ -825,7 +927,7 @@ def evaluate_negative_control(control_id, control_type, real_metric, control_met
         control_type=control_type,
         expected_behavior="negative control scores near chance (AUC skill ~ 0)",
         observed_behavior=observed,
-        matched_real_config_id=None,
+        matched_real_config_id=matched_real_config_id,
         real_metric=None if real_metric is None else float(real_metric),
         control_metric=None if control_metric is None else float(control_metric),
         failure_threshold=float(threshold),
@@ -839,6 +941,110 @@ def evaluate_negative_control(control_id, control_type, real_metric, control_met
     )
 
 
+def evaluate_noise_feature_control(noise_fold_skills, spec=None,
+                                   matched_real_config_id=None,
+                                   matched_real_config_ids_by_fold=None):
+    """Deterministic v5 noise-feature control independent of observed real skill.
+
+    Tests H0: mean(noise AUC_skill_t) <= 0 with a one-sided upper t-test.
+    ``None``/missing fold skills fail closed. STOP is derived from the noise-only
+    evidence and never from ``abs(real_metric)`` or a post-hoc reference.
+    """
+    spec = dict(spec or {})
+    reference_statistic = spec.get(
+        "reference_statistic", "noise_only_model_mean_inner_auc_skill"
+    )
+    null = spec.get("null", "H0: mean(AUC_skill_t) <= 0")
+    test = spec.get("test", "one_sample_one_sided_upper_t_test")
+    alpha = float(spec.get("alpha", 0.05))
+    min_folds = int(spec.get("min_folds", 4))
+    failure_condition = str(spec.get("failure_condition",
+        "n_folds < 4 OR (control_metric > 0 AND one_sided_p_value < alpha)"))
+    values = [float(value) for value in (noise_fold_skills or [])
+              if value is not None and np.isfinite(value)]
+    n_folds = int(len(values))
+    missing_count = int(len(list(noise_fold_skills or []))) - n_folds
+    if n_folds < min_folds or missing_count > 0:
+        return {
+            "control_id": "noise_feature_classification",
+            "control_type": "noise_feature",
+            "expected_behavior": "noise-only features produce no AUC skill beyond chance",
+            "observed_behavior": "insufficient noise-control folds (n=%d, missing=%d)"
+                                % (n_folds, missing_count),
+            "matched_real_config_id": matched_real_config_id,
+            "matched_real_config_ids_by_fold": matched_real_config_ids_by_fold,
+            "real_metric": None,
+            "control_metric": None,
+            "failure_threshold": None,
+            "reference_statistic": reference_statistic,
+            "null": null,
+            "test": test,
+            "alpha": alpha,
+            "min_folds": min_folds,
+            "n_folds": n_folds,
+            "control_sd": None,
+            "control_se": None,
+            "t_stat": None,
+            "p_value": None,
+            "failure_condition": failure_condition,
+            "passed": False,
+            "stop_required": True,
+            "reason": "insufficient_noise_control_folds",
+            "mandatory": True,
+            "affected_tasks": ["classification"],
+            "extra": {
+                "selected_config_ids_by_fold": matched_real_config_ids_by_fold,
+                "noise_fold_skills": list(noise_fold_skills or []),
+            },
+        }
+
+    mean = float(np.mean(values))
+    sd = float(np.std(values, ddof=1)) if n_folds > 1 else 0.0
+    se = float(sd / np.sqrt(n_folds))
+    from scipy import stats
+    if se == 0.0:
+        t_stat = float("inf") if mean > 0.0 else 0.0
+        p_value = 0.0 if mean > 0.0 else 1.0
+    else:
+        t_stat = float(mean / se)
+        p_value = float(stats.t.sf(t_stat, df=n_folds - 1))
+    passed = bool(not (mean > 0.0 and p_value < alpha))
+    stop_required = bool(not passed)
+    return {
+        "control_id": "noise_feature_classification",
+        "control_type": "noise_feature",
+        "expected_behavior": "noise-only features produce no AUC skill beyond chance",
+        "observed_behavior": ("noise-only mean AUC-skill = %.6f, one-sided p = %.6f"
+                              % (mean, p_value)),
+        "matched_real_config_id": matched_real_config_id,
+        "matched_real_config_ids_by_fold": matched_real_config_ids_by_fold,
+        "real_metric": None,
+        "control_metric": mean,
+        "failure_threshold": None,
+        "reference_statistic": reference_statistic,
+        "null": null,
+        "test": test,
+        "alpha": alpha,
+        "min_folds": min_folds,
+        "n_folds": n_folds,
+        "control_sd": sd,
+        "control_se": se,
+        "t_stat": t_stat,
+        "p_value": p_value,
+        "failure_condition": failure_condition,
+        "passed": passed,
+        "stop_required": stop_required,
+        "reason": ("noise-only skill is consistent with the null" if passed
+                   else "noise-only skill exceeds chance and the one-sided null is rejected"),
+        "mandatory": True,
+        "affected_tasks": ["classification"],
+        "extra": {
+            "selected_config_ids_by_fold": matched_real_config_ids_by_fold,
+            "noise_fold_skills": list(noise_fold_skills or []),
+        },
+    }
+
+
 def build_negative_controls(negative_records):
     real = [item["real_skill"] for item in negative_records
             if item.get("real_skill") is not None]
@@ -846,23 +1052,35 @@ def build_negative_controls(negative_records):
                 if item.get("shuffled_skill") is not None]
     noise = [item["noise_skill"] for item in negative_records
              if item.get("noise_skill") is not None]
+    noise_folds = [skill for item in negative_records
+                   for skill in (item.get("noise_fold_skills") or [])]
     real_mean = float(np.mean(real)) if real else None
     shuffled_mean = float(np.mean(shuffled)) if shuffled else None
     noise_mean = float(np.mean(noise)) if noise else None
+    matched_by_fold = {
+        str(item["window_id"]): item["matched_real_config_id"]
+        for item in negative_records
+        if item.get("window_id") and item.get("matched_real_config_id")
+    }
+    first_matched = next(iter(matched_by_fold.values()), None)
+    contract = load_contract()
+    noise_spec = (contract.get("negative_controls_spec") or {}).get(
+        "noise_feature_classification", {})
     controls = [
         evaluate_negative_control(
             "shuffled_target_classification", "shuffled_target",
-            real_mean, shuffled_mean,
+            real_mean, shuffled_mean, matched_real_config_id=first_matched,
         ),
-        evaluate_negative_control(
-            "noise_feature_classification", "noise_feature",
-            real_mean, noise_mean,
+        evaluate_noise_feature_control(
+            noise_folds, spec=noise_spec, matched_real_config_id=first_matched,
+            matched_real_config_ids_by_fold=matched_by_fold,
         ),
     ]
     return controls, overall_stop(controls), {
         "real_skill_mean": real_mean,
         "shuffled_skill_mean": shuffled_mean,
         "noise_skill_mean": noise_mean,
+        "noise_fold_skills": noise_folds,
         "per_selected_fold": negative_records,
     }
 
@@ -871,9 +1089,13 @@ def run_pre_holdout_validation(frame, contract=None, commit=None, holdout=None):
     contract = contract or load_contract()
     holdout = holdout or locked_holdout()
     if contract.get("eligible_task", {}).get("task") != "classification":
-        raise Wp7ValidationError("WP7 v3 eligible task is not classification")
+        raise Wp7ValidationError(
+            "%s eligible task is not classification" % contract.get("contract_version")
+        )
     if contract.get("target") != TARGET:
-        raise Wp7ValidationError("WP7 v3 target mismatch")
+        raise Wp7ValidationError(
+            "%s target mismatch" % contract.get("contract_version")
+        )
     assert_development_only(frame)
 
     started = time.time()
@@ -960,6 +1182,9 @@ def run_pre_holdout_validation(frame, contract=None, commit=None, holdout=None):
             selected_evaluation, fold_frames, safe_folds, selected_config,
             int(contract["seeds"]["placebo_seed"]), contract
         )
+        negative["window_id"] = window["window_id"]
+        negative["matched_real_config_id"] = selected_config.config_id
+        negative["config_id"] = selected_config.config_id
         negative_records.append(negative)
 
         per_outer_prediction = outer_outcome.copy()
@@ -1004,11 +1229,15 @@ def run_pre_holdout_validation(frame, contract=None, commit=None, holdout=None):
             "config_id": selected_config.config_id,
             "model": selected_config.model,
             "strategy": selected_config.strategy,
-            "params": dict(selected_config.params),
             "preprocessing": list(selected_config.preprocessing),
+            "params": dict(selected_config.params),
             "calibration": calibration["selected"],
-            "features": final_model["features"],
+            "features": list(final_model["features"]),
+            "selected_features_source": "train_only",
+            "feature_evidence": final_model["evidence"],
             "mean_auc_skill": selected_evaluation["mean_auc_skill"],
+            "selection_deterministic_tie_break":
+                "smaller hyperparameter complexity, then deterministic config_id order",
         }
         candidate_scores.extend(
             {
@@ -1134,27 +1363,109 @@ def _ledger_records(result):
     return records
 
 
+def _sha256_prefix(path_or_bytes):
+    if isinstance(path_or_bytes, (str, Path)):
+        data = Path(path_or_bytes).read_bytes()
+    else:
+        data = bytes(path_or_bytes)
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+def _candidate_training_procedure(result, contract):
+    geometry = result.get("outer_geometry") or {}
+    return {
+        "outer_training_definition":
+            "for each outer fold, final selected model is retrained on all trainable "
+            "rows whose label is fully observable before outer_test_start",
+        "inner_design": {
+            "mode": "chronological_expanding_folds_only",
+            "outer_window_ids": [item["window_id"]
+                                 for item in geometry.get("windows", [])],
+            "safe_inner_fold_counts_by_outer_fold":
+                list(geometry.get("safe_inner_fold_counts_by_outer_fold") or []),
+        },
+        "feature_selection": "frozen WP6 strategy semantics, train-only",
+        "preprocessing": "VALUE_SPEC fitted on the permitted train slice only",
+        "model_fit": "selected estimator/params with frozen model_seed",
+        "calibration_fit":
+            "selected calibration fitted on selected-model inner OOF predictions",
+        "retraining_policy":
+            "retrain selected config/calibration per outer fold; no cross-fold reuse",
+        "frozen_determinism":
+            "seeds, params, config, calibration, features and deterministic tie-breaks "
+            "are frozen; no random KFold/train_test_split/ShuffleSplit evaluation",
+    }
+
+
+def _candidate_evaluation_evidence(result):
+    rows = []
+    for fold in result.get("outer_folds") or []:
+        metrics = fold.get("outer_metrics") or {}
+        rows.append({
+            "window_id": fold.get("window_id"),
+            "selected_config_id": fold.get("selected_config_id"),
+            "selected_calibration": fold.get("selected_calibration"),
+            "selected_features": list(fold.get("selected_features") or []),
+            "selection_mean_auc_skill": fold.get("selection_mean_auc_skill"),
+            "outer_mean_auc_skill": metrics.get("mean_auc_skill"),
+            "outer_brier_skill_vs_train_base_rate":
+                metrics.get("brier_skill_vs_train_base_rate"),
+            "outer_test_rows": fold.get("outer_test_rows"),
+        })
+    return rows
+
+
+def _candidate_artifact_binding(artifact_root, written):
+    binding = {}
+    for name in ("summary.json", "decision.json", "predictions.json", "metrics.json",
+                 "controls.json", "robustness.json", "ledger.jsonl"):
+        path = Path(artifact_root) / name
+        if path.exists():
+            binding[name] = {
+                "path": str(path),
+                "sha256_prefix": _sha256_prefix(path),
+            }
+        else:
+            binding[name] = {"path": str(path), "sha256_prefix": None}
+    return binding
+
+
 def write_generation_artifacts(result, root=None):
     root = Path(root or ROOT)
     gid = generation_id(result)
     artifact_root = root / "artifacts" / "research" / "wp7" / gid
     candidate_path = root / MODEL_CANDIDATE_DIR_REL / ("%s.json" % gid)
+    contract_obj = load_contract()
     candidate_record = {
-        "schema_version": "wp7_model_generation_candidate_v1",
+        "schema_version": "wp7_model_generation_candidate_v2",
         "generation_id": gid,
         "generation_kind": GENERATION_KIND,
+        "dataset_id": result.get("dataset_id"),
+        "target_set_id": result.get("target_set_id"),
+        "feature_set_id": result.get("feature_set_id"),
+        "wp6_experiment_id": result.get("wp6_experiment_id"),
+        "seeds": {
+            "model_seed": result.get("seed"),
+            "bootstrap_seed": int(contract_obj["seeds"]["bootstrap_seed"]),
+            "placebo_seed": int(contract_obj["seeds"]["placebo_seed"]),
+        },
+        "producing_commit": result["producing_commit"],
         "contract_version": result["contract_version"],
         "contract_digest": result["contract_digest"],
-        "producing_commit": result["producing_commit"],
-        "frozen_at_stage": "WP7_PRE_HOLDOUT",
-        "status": result["status"],
-        "canonical_holdout_id": result["canonical_holdout_id"],
-        "holdout_performance_accessed": False,
-        "artifact_dir": str(artifact_root),
-        "selected_models_by_fold": result["selected_models_by_fold"],
         "contract_file": str(CONTRACT_REL),
         "contract_markdown_file": str(CONTRACT_MD_REL),
+        "canonical_holdout_id": result["canonical_holdout_id"],
+        "frozen_at_stage": "WP7_PRE_HOLDOUT",
+        "status": result["status"],
+        "selected_models_by_fold": result["selected_models_by_fold"],
+        "training_procedure": _candidate_training_procedure(result, contract_obj),
+        "artifact_binding": {},
+        "outer_fold_evaluation_evidence": _candidate_evaluation_evidence(result),
         "limitations": result["limitations"],
+        "holdout_usage": "none",
+        "holdout_performance_accessed": False,
+        "holdout_labels_accessed": False,
+        "holdout_rows_accessed": False,
     }
     payloads = {
         "summary.json": result,
@@ -1202,6 +1513,9 @@ def write_generation_artifacts(result, root=None):
         ledger_path.write_text(rendered_ledger, encoding="utf-8")
         written["ledger.jsonl"] = "written"
 
+    candidate_record["artifact_binding"] = _candidate_artifact_binding(
+        artifact_root, written
+    )
     written["model_generation_candidate"] = save_immutable(
         candidate_path, candidate_record
     )
