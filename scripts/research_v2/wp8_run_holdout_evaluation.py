@@ -45,6 +45,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.research import wp7_generation_corrections as wpc7  # noqa: E402
+from src.research.discovery.builder import attach_targets  # noqa: E402
+from src.research.discovery.panel import build_feature_panel  # noqa: E402
 from src.research.holdout import locked_holdout  # noqa: E402
 from src.research.ids import canonical_json  # noqa: E402
 from src.research.immutability import save_immutable  # noqa: E402
@@ -61,7 +63,14 @@ FREEZE_REL = Path("provenance") / "wp8" / "final_candidate_freeze.json"
 AUTHORIZATION_REL = Path("provenance") / "wp8" / "holdout_evaluation_authorization.json"
 LEDGER_REL = Path("provenance") / "wp8" / "holdout_access.json"
 SUMMARY_REL = Path("provenance") / "wp8" / "holdout_evaluation_summary.json"
+WP5_SCRIPT_REL = Path("scripts") / "research_v2" / "wp5_discover_features.py"
 WP7_SCRIPT_REL = Path("scripts") / "research_v2" / "wp7_validation.py"
+WP7_V5_CONTRACT_REL = Path("provenance") / "wp7" / "validation_contract_v5.json"
+CERTIFIED_DATASET_ID = "dataset_35a278e17c13"
+CERTIFIED_TARGET_SET_ID = "target_set_d2bb16610bce"
+CERTIFIED_FEATURE_SET_ID = "feature_set_4f7b43726310"
+CERTIFIED_TARGET_VERSION = "56d0f670bdf1b47c"
+CERTIFIED_PANEL_VERSION = "553ac17bf5d4d63f"
 
 CONTRACT_VERSION = "HOLDOUT_EVALUATION_CONTRACT_V1"
 CANONICAL_HOLDOUT_ID = "holdout_7ce54e933e16"
@@ -847,13 +856,12 @@ def write_summary_record(summary, root=None):
     }
 
 
-# ── WP7 certified loader (read-only; called only AFTER all gates) ──────────
-def load_wp7_engine(root=None):
-    root = Path(root or ROOT)
-    path = root / WP7_SCRIPT_REL
+# ── Certified input loaders (read-only; called only AFTER all gates) ─────────
+def _load_module_by_path(module_name, path):
+    """Load a script by explicit file path without importing it as a package."""
+    path = Path(path)
     if not path.is_file():
-        raise Wp8HoldoutEvaluationError("certified WP7 engine is missing: %s" % path)
-    module_name = "wp7_validation_engine_for_wp8_holdout"
+        raise Wp8HoldoutEvaluationError("certified engine is missing: %s" % path)
     spec = importlib.util.spec_from_file_location(module_name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules.setdefault(module_name, module)
@@ -861,14 +869,143 @@ def load_wp7_engine(root=None):
     return module
 
 
+def load_wp5_engine(root=None):
+    """Load the exact certified WP5 input-loading script by file path."""
+    root = Path(root or ROOT)
+    return _load_module_by_path(
+        "wp5_discover_features_for_wp8_holdout",
+        root / WP5_SCRIPT_REL,
+    )
+
+
+def load_wp7_engine(root=None):
+    """Load the certified WP7 validation script by file path.
+
+    Retained only for reference/tests; the holdout evaluation path must NOT
+    consume its development-restricted ``load_validation_panel``.
+    """
+    root = Path(root or ROOT)
+    return _load_module_by_path(
+        "wp7_validation_engine_for_wp8_holdout",
+        root / WP7_SCRIPT_REL,
+    )
+
+
+def assert_holdout_wp7_inputs_contract(root=None):
+    """Verify the frozen WP7-V5 certified input identities at runtime.
+
+    The VP8 evaluator must never proceed if the upstream contract has drifted,
+    because stage B's frozen bundle is content-bound to these exact inputs.
+    """
+    root = Path(root or ROOT)
+    path = root / WP7_V5_CONTRACT_REL
+    if not path.is_file():
+        raise Wp8HoldoutEvaluationError("certified WP7_VALIDATION_CONTRACT_V5 is missing: %s" % path)
+    contract = parse_json_file(path, expected_schema="wp7_validation_contract_v5")
+    if contract.get("contract_version") != CANONICAL_WP7_CONTRACT:
+        raise Wp8HoldoutEvaluationError(
+            "unexpected WP7 contract version %r; expected %r"
+            % (contract.get("contract_version"), CANONICAL_WP7_CONTRACT)
+        )
+    inputs = contract.get("certified_wp6_inputs") or {}
+    expected = {
+        "dataset_id": CERTIFIED_DATASET_ID,
+        "target_set_id": CERTIFIED_TARGET_SET_ID,
+        "feature_set_id": CERTIFIED_FEATURE_SET_ID,
+        "wp6_experiment_id": CANONICAL_WP6_EXPERIMENT_ID,
+    }
+    mismatches = {
+        name: (inputs.get(name), value)
+        for name, value in expected.items()
+        if inputs.get(name) != value
+    }
+    if mismatches:
+        raise Wp8HoldoutEvaluationError(
+            "WP7_VALIDATION_CONTRACT_V5 certified_wp6_inputs mismatch: %s"
+            % ", ".join(
+                "%s=%r expected=%r" % (name, actual, expected_value)
+                for name, (actual, expected_value) in sorted(mismatches.items())
+            )
+        )
+    return contract
+
+
+def load_holdout_evaluation_panel(root=None):
+    """Materialise the full certified PIT feature+target panel for holdout use.
+
+    This deliberately does NOT call the WP7/WP6 development-row assembly path
+    (which would exclude every ``feature_asof >= 2022-01-01``). It builds the
+    feature frame from the exact certified WP5 loaders with
+    ``restrict_to_development=False`` and the explicit opt-in
+    ``allow_locked_holdout=True``, then attaches the certified target columns.
+
+    The returned frame still contains the target columns, but this function does
+    not compute, print, rank, or otherwise inspect any holdout label value. The
+    one-shot evaluator is the only caller and runs it strictly after the ledger
+    has moved to ``STARTED``.
+    """
+    root = Path(root or ROOT)
+    assert_holdout_wp7_inputs_contract(root)
+    w5 = load_wp5_engine(root)
+
+    # Pin the exact frozen upstream identities/versions used by WP7-V5.
+    w5.DATASET_ID = CERTIFIED_DATASET_ID
+    w5.PANEL_VERSION = CERTIFIED_PANEL_VERSION
+    w5.TARGET_ID = CERTIFIED_TARGET_SET_ID
+    w5.TARGET_VERSION = CERTIFIED_TARGET_VERSION
+    w5.FEATURE_SET_ID = CERTIFIED_FEATURE_SET_ID
+    w5.WP4_MODERN_SIGNALS = (
+        root / "artifacts" / "research" / "wp5_correction" / "wp4_corrective" / "modern_signals.parquet"
+    )
+    w5.WP4_HISTORICAL_SIGNALS = (
+        root / "artifacts" / "research" / "wp5_correction" / "wp4_corrective" / "historical_signals.parquet"
+    )
+
+    panel = w5.load_panel()
+    targets = w5.load_targets()
+    prices = w5.load_prices()
+    actions = w5.load_actions()
+    benchmark_prices = w5.load_benchmark_prices()
+    benchmark_actions = w5.load_benchmark_actions()
+    fundamentals = w5.load_fundamentals()
+    cik_by_ticker, _cik_payload = w5.load_cik_by_ticker()
+
+    feature_frame, feature_summary = build_feature_panel(
+        panel, prices, actions, fundamentals, cik_by_ticker,
+        benchmark_prices, benchmark_actions,
+        restrict_to_development=False,
+        allow_locked_holdout=True,
+    )
+    frame = attach_targets(feature_frame, targets)
+    diagnostics = {
+        "loader": "wp8_holdout_evaluation_panel",
+        "dataset_id": CERTIFIED_DATASET_ID,
+        "target_set_id": CERTIFIED_TARGET_SET_ID,
+        "feature_set_id": CERTIFIED_FEATURE_SET_ID,
+        "target_version": CERTIFIED_TARGET_VERSION,
+        "panel_version": CERTIFIED_PANEL_VERSION,
+        "rows": int(len(frame)),
+        "securities": int(frame["security_id"].nunique()) if "security_id" in frame.columns else None,
+        "date_min": str(_utc(frame["feature_asof"]).min().strftime("%Y-%m-%d")) if "feature_asof" in frame.columns else None,
+        "date_max": str(_utc(frame["feature_asof"]).max().strftime("%Y-%m-%d")) if "feature_asof" in frame.columns else None,
+        "feature_panel_summary": {
+            "rows": feature_summary.get("rows"),
+            "eligible_panel_rows": feature_summary.get("eligible_panel_rows"),
+            "embargo_cutoff": feature_summary.get("embargo_cutoff"),
+            "locked_holdout_rows_in_panel": feature_summary.get("locked_holdout_rows_in_panel"),
+        },
+    }
+    return frame, diagnostics
+
+
 def load_holdout_evaluation_source(root=None):
-    """Return the certified panel/diagnostics from the WP5/WP6/WP7 loader.
+    """Return the certified unrestricted panel/diagnostics for one-shot holdout.
 
     This call reads real source data and must be invoked ONLY after the access
-    ledger has atomically moved to ``STARTED``.
+    ledger has atomically moved to ``STARTED``. The development-only WP7/WP6
+    loader is deliberately not used here.
     """
-    wp7 = load_wp7_engine(root)
-    return wp7.load_validation_panel()
+    return load_holdout_evaluation_panel(root)
 
 
 def source_diagnostics(panel):
@@ -920,12 +1057,24 @@ def run_preflight_gates(root=None, code_digest=None):
 
 
 def _code_digest(root=None):
+    """Bind the one-shot run to every irreducible holdout-producing source file.
+
+    The order is deterministic and intentionally excludes generated artifact/data
+    paths: the digest covers the evaluator, the phase contracts/freeze, and the
+    exact source modules that materialise features, targets, metrics and holdout
+    behavior.
+    """
+    root = Path(root or ROOT)
     scope = [
         root / "scripts/research_v2/wp8_run_holdout_evaluation.py",
         root / "provenance/wp8/holdout_evaluation_contract_v1.json",
         root / "provenance/wp8/final_candidate_freeze.json",
+        root / "src/research/discovery/panel.py",
+        root / "src/research/discovery/builder.py",
+        root / "src/research/modeling/metrics.py",
+        root / "src/research/holdout.py",
+        root / "scripts/research_v2/wp8_freeze_final_candidate.py",
     ]
-    root = Path(root or ROOT)
     hasher = hashlib.sha256()
     for path in scope:
         hasher.update(path.read_bytes())
