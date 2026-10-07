@@ -1,0 +1,11 @@
+{
+  "schema_version": "wp8_holdout_evaluation_authorization_v1",
+  "authorization_type": "HOLDOUT_EVALUATION_AUTHORIZATION",
+  "scope": "exactly one evaluation",
+  "authorized_wp7_generation": "generation_de0f9bbd0bec",
+  "authorized_final_candidate_freeze": "freeze_e62eac30df40",
+  "authorized_holdout": "holdout_7ce54e933e16",
+  "condition": "all pre-access gates in WP8 mission must PASS",
+  "source": "explicit human authorization in this mission",
+  "holdout_evaluation_count": 1
+}

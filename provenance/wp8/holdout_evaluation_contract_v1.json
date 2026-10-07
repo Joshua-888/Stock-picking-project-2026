@@ -1,0 +1,40 @@
+{
+  "schema_version": "wp8_holdout_evaluation_contract_v1",
+  "contract_version": "HOLDOUT_EVALUATION_CONTRACT_V1",
+  "created_before_access": true,
+  "frozen_at_stage": "WP8_PRE_ACCESS",
+  "canonical_wp7_generation_id": "generation_de0f9bbd0bec",
+  "canonical_wp7_contract": "WP7_VALIDATION_CONTRACT_V5",
+  "canonical_wp6_experiment_id": "experiment_ee434a07a25d",
+  "canonical_final_candidate_freeze_id": "freeze_e62eac30df40",
+  "canonical_holdout_id": "holdout_7ce54e933e16",
+  "holdout_start": "2022-01-01",
+  "holdout_end": "2025-08-31",
+  "embargo_months": 12,
+  "horizon_months": 12,
+  "target": "outperform_12m",
+  "evaluation_count": 1,
+  "row_definition": "feature_asof >= holdout_start AND feature_asof <= holdout_end AND target_observable==true AND required frozen features available under PIT rules; censored/missing outcomes are EXCLUDED (never class 0, never imputed).",
+  "model_rule": "static_frozen_model from final_candidate_freeze; no fitting/preprocessing-fit/feature-selection/calibration/retraining in holdout path.",
+  "primary_metric": "monthly cross-sectional equal-weighted mean ROC-AUC skill (AUC - 0.5); equal month weighting.",
+  "min_observations": 30,
+  "primary_hypothesis": "H0 mean monthly AUC_skill <= 0 vs H1 > 0.",
+  "primary_inference": "deterministic one-sided HAC/Newey-West Bartlett t-test on monthly AUC skill with lag 12; p = SF(t) for t>0; if n<2 or invalid, result blocked/invalid not silently passed.",
+  "primary_verdict_rules": {
+    "HOLDOUT_SIGNAL_CONFIRMED": "mean_auc_skill>0 AND one_sided_hac_p<0.05",
+    "HOLDOUT_POSITIVE_BUT_INCONCLUSIVE": "mean_auc_skill>0 AND one_sided_hac_p>=0.05",
+    "HOLDOUT_NOT_CONFIRMED": "mean_auc_skill<=0"
+  },
+  "secondary_metrics": {
+    "roc_auc": "pooled holdout ROC-AUC",
+    "pr_auc": "pooled holdout PR-AUC",
+    "pr_auc_benchmark": "final base rate",
+    "brier": "pooled holdout Brier score",
+    "brier_skill_vs_final_base_rate": "final-base-rate Brier minus model Brier",
+    "log_loss": "pooled holdout log loss",
+    "log_loss_skill_vs_final_base_rate": "final-base-rate log loss minus model log loss",
+    "calibration_slope": "evaluation diagnostic only, never recalibrate",
+    "calibration_intercept": "evaluation diagnostic only, never recalibrate"
+  },
+  "secondary_diagnostics": "optional quintile hit-rate/economic descriptive metrics if straightforward; do NOT search multiple cutoffs."
+}

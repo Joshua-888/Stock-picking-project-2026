@@ -1,0 +1,10 @@
+{
+  "schema_version": "wp8_holdout_access_ledger_v1",
+  "holdout_id": "holdout_7ce54e933e16",
+  "state": "AUTHORIZED_NOT_ACCESSED",
+  "access_count": 0,
+  "evaluation_count": 0,
+  "final_candidate_freeze_id": "freeze_e62eac30df40",
+  "wp7_generation_id": "generation_de0f9bbd0bec",
+  "contract_digest": "b294989a2296778f63f85f9f11fda877289e8b829443700af492711f6c61833d"
+}
