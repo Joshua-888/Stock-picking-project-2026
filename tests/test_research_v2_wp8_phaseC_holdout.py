@@ -567,7 +567,35 @@ def test_dedicated_holdout_loader_uses_unrestricted_flag_and_never_uses_wp7(wp8,
     root = REPO_ROOT
     calls = {}
 
+    binding = {
+        "schema_version": "edgar_input_binding_v1",
+        "edgar_fundamentals": {
+            "shards": [],
+            "shard_manifest_sha256": "a" * 64,
+        },
+        "edgar_cik_mapping": {
+            "path": "artifacts/research/wp4/edgar_cik_mapping.json",
+            "sha256": "b" * 64,
+        },
+    }
+
     monkeypatch.setattr(wp8, "assert_holdout_wp7_inputs_contract", lambda root=None: {})
+    monkeypatch.setattr(
+        wp8, "load_input_binding",
+        lambda root=None: binding,
+    )
+    monkeypatch.setattr(
+        wp8, "verify_edgar_input_binding",
+        lambda root=None, binding=None: True,
+    )
+    monkeypatch.setattr(
+        wp8, "load_and_verify_edgar_fundamentals",
+        lambda root=None, binding=None: pd.DataFrame(),
+    )
+    monkeypatch.setattr(
+        wp8, "load_and_verify_cik_by_ticker",
+        lambda root=None, binding=None: ({}, {}),
+    )
     monkeypatch.setattr(
         wp8, "load_wp5_engine",
         lambda root=None: SimpleNamespace(
@@ -577,14 +605,19 @@ def test_dedicated_holdout_loader_uses_unrestricted_flag_and_never_uses_wp7(wp8,
             load_actions=lambda: pd.DataFrame(),
             load_benchmark_prices=lambda: pd.DataFrame(),
             load_benchmark_actions=lambda: pd.DataFrame(),
-            load_fundamentals=lambda: pd.DataFrame(),
-            load_cik_by_ticker=lambda: ({}, {}),
+            load_fundamentals=lambda: (_ for _ in ()).throw(
+                AssertionError("holdout loader must not call unbound wp5.load_fundamentals")
+            ),
+            load_cik_by_ticker=lambda: (_ for _ in ()).throw(
+                AssertionError("holdout loader must not call unbound wp5.load_cik_by_ticker")
+            ),
         ),
     )
 
     def fake_build_feature_panel(panel, prices, actions, fundamentals, cik_by_ticker,
                                  benchmark_prices, benchmark_actions, **kwargs):
         calls["args"] = kwargs
+        calls["cik_by_ticker"] = cik_by_ticker
         return pd.DataFrame({
             "security_id": ["SYN"],
             "ticker": ["SYN"],
@@ -610,6 +643,26 @@ def test_dedicated_holdout_loader_uses_unrestricted_flag_and_never_uses_wp7(wp8,
     frame, diagnostics = wp8.load_holdout_evaluation_panel(root)
     assert calls["args"]["restrict_to_development"] is False
     assert calls["args"]["allow_locked_holdout"] is True
+    assert calls["cik_by_ticker"] == {}
     assert diagnostics["loader"] == "wp8_holdout_evaluation_panel"
     assert diagnostics["rows"] == 1
     assert diagnostics["feature_panel_summary"]["locked_holdout_rows_in_panel"] == 1
+    assert diagnostics["edgar_input_binding"]["edgar_cik_mapping"]["sha256"] == "b" * 64
+
+
+def test_wp8_code_digest_includes_input_binding(wp8, monkeypatch, tmp_path):
+    read_paths = []
+    real_read_bytes = Path.read_bytes
+
+    def fake_read_bytes(path):
+        read_paths.append(path)
+        return b"synthetic"
+
+    monkeypatch.setattr(Path, "read_bytes", fake_read_bytes)
+    try:
+        digest = wp8._code_digest(tmp_path)
+    finally:
+        monkeypatch.setattr(Path, "read_bytes", real_read_bytes)
+
+    assert digest == hashlib.sha256(b"synthetic" * len(read_paths)).hexdigest()
+    assert any(path.name == "input_binding.json" for path in read_paths)

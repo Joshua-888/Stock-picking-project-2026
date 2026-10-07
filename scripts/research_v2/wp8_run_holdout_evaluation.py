@@ -45,6 +45,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.research import wp7_generation_corrections as wpc7  # noqa: E402
+from src.research.data.edgar_binding import (  # noqa: E402
+    load_and_verify_cik_by_ticker,
+    load_and_verify_edgar_fundamentals,
+    verify_edgar_input_binding,
+)
 from src.research.discovery.builder import attach_targets  # noqa: E402
 from src.research.discovery.panel import build_feature_panel  # noqa: E402
 from src.research.holdout import locked_holdout  # noqa: E402
@@ -63,6 +68,7 @@ FREEZE_REL = Path("provenance") / "wp8" / "final_candidate_freeze.json"
 AUTHORIZATION_REL = Path("provenance") / "wp8" / "holdout_evaluation_authorization.json"
 LEDGER_REL = Path("provenance") / "wp8" / "holdout_access.json"
 SUMMARY_REL = Path("provenance") / "wp8" / "holdout_evaluation_summary.json"
+INPUT_BINDING_REL = Path("provenance") / "wp8" / "input_binding.json"
 WP5_SCRIPT_REL = Path("scripts") / "research_v2" / "wp5_discover_features.py"
 WP7_SCRIPT_REL = Path("scripts") / "research_v2" / "wp7_validation.py"
 WP7_V5_CONTRACT_REL = Path("provenance") / "wp7" / "validation_contract_v5.json"
@@ -142,6 +148,7 @@ def _is_producing_code_path(path):
         "provenance/wp8/holdout_evaluation_authorization.json",
         "provenance/wp8/holdout_access.json",
         "provenance/wp8/final_candidate_freeze.json",
+        "provenance/wp8/input_binding.json",
     ):
         return True
     return normalized.startswith("src/research/") or normalized.startswith(
@@ -869,6 +876,22 @@ def _load_module_by_path(module_name, path):
     return module
 
 
+def input_binding_path(root=None):
+    """Return the tracked aggregate EDGAR input-binding provenance path."""
+    return Path(root or ROOT) / INPUT_BINDING_REL
+
+
+def load_input_binding(root=None):
+    """Load and shape-check the tracked EDGAR input binding.
+
+    The actual content verification is done by
+    :func:`src.research.data.edgar_binding.verify_edgar_input_binding` inside the
+    panel loader; this accessor only loads the tracked provenance payload.
+    """
+    path = input_binding_path(root)
+    return parse_json_file(path, expected_schema="edgar_input_binding_v1")
+
+
 def load_wp5_engine(root=None):
     """Load the exact certified WP5 input-loading script by file path."""
     root = Path(root or ROOT)
@@ -961,14 +984,20 @@ def load_holdout_evaluation_panel(root=None):
         root / "artifacts" / "research" / "wp5_correction" / "wp4_corrective" / "historical_signals.parquet"
     )
 
+    # The one-shot holdout features must be deterministically bound to the
+    # EDGAR fundamentals/CIK bytes; verify the tracked aggregate binding before
+    # materializing any feature or target column.
+    binding = load_input_binding(root)
+    verify_edgar_input_binding(root, binding)
+    fundamentals = load_and_verify_edgar_fundamentals(root, binding)
+    cik_by_ticker, _cik_payload = load_and_verify_cik_by_ticker(root, binding)
+
     panel = w5.load_panel()
     targets = w5.load_targets()
     prices = w5.load_prices()
     actions = w5.load_actions()
     benchmark_prices = w5.load_benchmark_prices()
     benchmark_actions = w5.load_benchmark_actions()
-    fundamentals = w5.load_fundamentals()
-    cik_by_ticker, _cik_payload = w5.load_cik_by_ticker()
 
     feature_frame, feature_summary = build_feature_panel(
         panel, prices, actions, fundamentals, cik_by_ticker,
@@ -977,6 +1006,22 @@ def load_holdout_evaluation_panel(root=None):
         allow_locked_holdout=True,
     )
     frame = attach_targets(feature_frame, targets)
+    binding_fundamentals = binding["edgar_fundamentals"]
+    binding_shards = binding_fundamentals["shards"]
+    binding_diagnostics = {
+        "path": str(input_binding_path(root)),
+        "schema_version": binding["schema_version"],
+        "edgar_fundamentals": {
+            "shard_count": int(len(binding_shards)),
+            "shard_manifest_sha256": binding_fundamentals["shard_manifest_sha256"],
+            "bound_shard_row_count": int(sum(shard["row_count"] for shard in binding_shards)),
+        },
+        "edgar_cik_mapping": {
+            "path": binding["edgar_cik_mapping"]["path"],
+            "sha256": binding["edgar_cik_mapping"]["sha256"],
+            "exact_mapped_tickers": int(len(cik_by_ticker)),
+        },
+    }
     diagnostics = {
         "loader": "wp8_holdout_evaluation_panel",
         "dataset_id": CERTIFIED_DATASET_ID,
@@ -984,6 +1029,7 @@ def load_holdout_evaluation_panel(root=None):
         "feature_set_id": CERTIFIED_FEATURE_SET_ID,
         "target_version": CERTIFIED_TARGET_VERSION,
         "panel_version": CERTIFIED_PANEL_VERSION,
+        "edgar_input_binding": binding_diagnostics,
         "rows": int(len(frame)),
         "securities": int(frame["security_id"].nunique()) if "security_id" in frame.columns else None,
         "date_min": str(_utc(frame["feature_asof"]).min().strftime("%Y-%m-%d")) if "feature_asof" in frame.columns else None,
@@ -1074,6 +1120,9 @@ def _code_digest(root=None):
         root / "src/research/modeling/metrics.py",
         root / "src/research/holdout.py",
         root / "scripts/research_v2/wp8_freeze_final_candidate.py",
+        # Aggregate EDGAR fundamentals/CIK input binding: changes to the tracked
+        # binding must invalidate the one-shot code fingerprint.
+        root / "provenance/wp8/input_binding.json",
     ]
     hasher = hashlib.sha256()
     for path in scope:
