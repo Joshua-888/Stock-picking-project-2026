@@ -43,6 +43,7 @@ def _load_wp8_holdout():
 
 
 from src.research import wp7_generation_corrections as wpc7  # noqa: E402
+from src.research.discovery.panel import FeaturePanelError, build_feature_panel  # noqa: E402
 from src.research.immutability import ImmutabilityError  # noqa: E402
 
 ENGINE = _load_wp8_holdout()
@@ -499,3 +500,116 @@ def test_contract_file_has_frozen_required_fields(wp8):
     assert contract["target"] == "outperform_12m"
     assert contract["evaluation_count"] == 1
     assert wp8.contract_file_digest(root=REPO_ROOT) is not None
+
+
+def _source_only_feature_inputs():
+    """Synthetic feature-panel inputs with one development and one holdout row."""
+    panel = pd.DataFrame({
+        "security_id": ["SYN"],
+        "ticker": ["SYN"],
+        "feature_asof": ["2020-01-31"],
+        "price_date": ["2020-01-31"],
+    })
+    prices = pd.DataFrame({
+        "security_id": ["SYN"],
+        "trade_date": ["2018-01-02"],
+        "raw_close": [100.0],
+    })
+    benchmark_prices = pd.DataFrame({
+        "security_id": ["SPY"],
+        "ticker": ["SPY"],
+        "trade_date": ["2018-01-02"],
+        "raw_close": [300.0],
+    })
+    fundamentals = pd.DataFrame(
+        columns=["cik", "field", "value", "fiscal_period_start", "fiscal_period_end",
+                 "accession", "available_at", "form"]
+    )
+    return panel, prices, benchmark_prices, fundamentals
+
+
+def test_build_feature_panel_rejects_holdout_rows_by_default():
+    panel, prices, benchmark_prices, fundamentals = _source_only_feature_inputs()
+    panel = pd.concat([panel, pd.DataFrame({
+        "security_id": ["SYN"],
+        "ticker": ["SYN"],
+        "feature_asof": ["2022-01-31"],
+        "price_date": ["2022-01-31"],
+    })], ignore_index=True)
+    with pytest.raises(FeaturePanelError) as recorded:
+        build_feature_panel(
+            panel, prices, None, fundamentals, {"SYN": "0000000000"},
+            benchmark_prices, None, restrict_to_development=False,
+        )
+    assert "locked-holdout row" in str(recorded.value)
+
+
+def test_build_feature_panel_allow_locked_holdout_reports_counted_proof():
+    panel, prices, benchmark_prices, fundamentals = _source_only_feature_inputs()
+    panel = pd.concat([panel, pd.DataFrame({
+        "security_id": ["SYN"],
+        "ticker": ["SYN"],
+        "feature_asof": ["2022-01-31"],
+        "price_date": ["2022-01-31"],
+    })], ignore_index=True)
+    frame, summary = build_feature_panel(
+        panel, prices, None, fundamentals, {"SYN": "0000000000"},
+        benchmark_prices, None,
+        restrict_to_development=False,
+        allow_locked_holdout=True,
+    )
+    assert "feature_asof" in frame.columns
+    assert summary["locked_holdout_rows_in_panel"] > 0
+    assert summary["eligible_panel_rows"] == 2
+
+
+def test_dedicated_holdout_loader_uses_unrestricted_flag_and_never_uses_wp7(wp8, monkeypatch):
+    root = REPO_ROOT
+    calls = {}
+
+    monkeypatch.setattr(wp8, "assert_holdout_wp7_inputs_contract", lambda root=None: {})
+    monkeypatch.setattr(
+        wp8, "load_wp5_engine",
+        lambda root=None: SimpleNamespace(
+            load_panel=lambda: pd.DataFrame(columns=["security_id", "ticker", "feature_asof", "price_date"]),
+            load_targets=lambda: pd.DataFrame(),
+            load_prices=lambda: pd.DataFrame(),
+            load_actions=lambda: pd.DataFrame(),
+            load_benchmark_prices=lambda: pd.DataFrame(),
+            load_benchmark_actions=lambda: pd.DataFrame(),
+            load_fundamentals=lambda: pd.DataFrame(),
+            load_cik_by_ticker=lambda: ({}, {}),
+        ),
+    )
+
+    def fake_build_feature_panel(panel, prices, actions, fundamentals, cik_by_ticker,
+                                 benchmark_prices, benchmark_actions, **kwargs):
+        calls["args"] = kwargs
+        return pd.DataFrame({
+            "security_id": ["SYN"],
+            "ticker": ["SYN"],
+            "feature_asof": pd.to_datetime(["2022-01-31"], utc=True),
+            "x1": [0.1],
+        }), {
+            "rows": 1,
+            "eligible_panel_rows": 1,
+            "embargo_cutoff": "2021-01-01",
+            "locked_holdout_rows_in_panel": 1,
+        }
+
+    monkeypatch.setattr(wp8, "build_feature_panel", fake_build_feature_panel)
+    monkeypatch.setattr(
+        wp8, "attach_targets",
+        lambda frame, targets: frame.assign(outperform_12m=1.0, target_observable=True),
+    )
+
+    monkeypatch.setattr(wp8, "load_wp7_engine", lambda root=None: (_ for _ in ()).throw(
+        AssertionError("dedicated holdout loader must not call WP7")
+    ))
+
+    frame, diagnostics = wp8.load_holdout_evaluation_panel(root)
+    assert calls["args"]["restrict_to_development"] is False
+    assert calls["args"]["allow_locked_holdout"] is True
+    assert diagnostics["loader"] == "wp8_holdout_evaluation_panel"
+    assert diagnostics["rows"] == 1
+    assert diagnostics["feature_panel_summary"]["locked_holdout_rows_in_panel"] == 1
