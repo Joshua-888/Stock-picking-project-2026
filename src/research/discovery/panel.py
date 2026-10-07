@@ -282,13 +282,20 @@ from .catalog import FEATURE_NAMES as _CANDIDATE_NAMES  # noqa: E402
 
 def build_feature_panel(panel, prices, actions, fundamentals, cik_by_ticker,
                         benchmark_prices, benchmark_actions, config=None,
-                        restrict_to_development=True):
+                        restrict_to_development=True, *,
+                        allow_locked_holdout=False):
     """Materialise the PIT feature panel.
 
     Returns ``(frame, summary)`` where ``frame`` has one row per development
     (or, when unrestricted, per panel) observation and one column per candidate
     feature. ``summary`` records row counts, the embargo cutoff used and an
-    explicit locked-holdout exclusion proof.
+    explicit locked-holdout exclusion/proof count.
+
+    ``allow_locked_holdout`` is an explicit opt-in for evaluation-only paths.
+    The default is unchanged: any surviving locked-holdout row raises. When
+    ``True``, those rows are permitted and are reported through
+    ``locked_holdout_rows_in_panel`` as a counted proof rather than silently
+    hidden.
     """
     config = config or ComputationConfig()
     for frame, what in ((panel, "panel"), (prices, "prices"), (actions, "actions"),
@@ -329,12 +336,14 @@ def build_feature_panel(panel, prices, actions, fundamentals, cik_by_ticker,
     if frame.empty:
         frame = pd.DataFrame(columns=["security_id", "ticker", "feature_asof"] + list(_CANDIDATE_NAMES))
 
-    # Explicit exclusion proof: no locked-holdout row survived the restriction.
+    # Explicit exclusion proof: no locked-holdout row survived the restriction
+    # unless the caller opted in for the evaluation-only unrestricted path. The
+    # count is always retained in summary as a deterministic audit fact.
     if "feature_asof" in frame.columns and len(frame):
         holdout_rows = int(holdout_mask(frame).sum())
     else:
         holdout_rows = 0
-    if holdout_rows:
+    if holdout_rows and not allow_locked_holdout:
         raise FeaturePanelError("feature panel contains %d locked-holdout row(s)" % holdout_rows)
 
     coverage = {}
