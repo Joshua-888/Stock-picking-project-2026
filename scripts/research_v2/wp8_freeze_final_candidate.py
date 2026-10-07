@@ -495,6 +495,37 @@ def validate_clean_producing_worktree(root=None):
     The resolved HEAD is returned and is recorded as the producing commit.
     Ignored/untracked files always stay permitted.
     """
+    root = Path(root or ROOT)
+    commit = current_git_commit(str(root))
+    if not commit:
+        raise Wp8FreezeError("no git commit available for reproducible provenance")
+    dirty = [
+        path for path in _dirty_non_ignored_paths(root) if _is_producing_code_path(path)
+    ]
+    if dirty:
+        raise Wp8FreezeError(
+            "WP8 refusing to run with modified tracked producing-code files; producing "
+            "commit %s would not contain the actual working-tree code. Dirty paths: %s"
+            % (commit, ", ".join(dirty))
+        )
+    return commit
+
+
+def _dirty_non_ignored_paths(root):
+    """Tracked-file modifications only; ignored/untracked files stay permitted."""
+    output = _git_output(
+        ["status", "--porcelain", "--untracked-files=no"], root, strip=False
+    )
+    paths = set()
+    for line in output.splitlines():
+        if len(line) < 4:
+            continue
+        # porcelain format is ``XY PATH`` (plus rename arrows after the path);
+        # with untracked files disabled every line is a tracked working-tree change.
+        path = line[3:].strip()
+        if path:
+            paths.add(path)
+    return sorted(paths)
 
 
 def _git_output(args, root, strip=True):
