@@ -1,0 +1,37 @@
+{
+  "schema_version": "wp7_pre_holdout_certification_v1",
+  "work_package": "WP7_PRE_HOLDOUT",
+  "canonical_generation_id": "generation_de0f9bbd0bec",
+  "canonical_wp7_contract": "WP7_VALIDATION_CONTRACT_V5",
+  "canonical_wp6_experiment_id": "experiment_ee434a07a25d",
+  "canonical_holdout_id": "holdout_7ce54e933e16",
+  "producing_commit": "b42e34d35b0a5c40cd07c3203a83205e7cfdf2e5",
+  "certification_head": "e7d48b928cd5cfd8fe582ef2b2db32e66e578c71",
+  "unresolved_hard_count": 0,
+  "unresolved_material_count": 0,
+  "holdout_performance_access_count": 0,
+  "holdout_labels_access_count": 0,
+  "holdout_rows_access_count": 0,
+  "test_gate": {
+    "full_command": "PYTHONPATH=. /opt/venv/bin/python -m pytest -q tests/test_research_v2_wp6_*.py tests/test_research_v2_wp7_*.py",
+    "passed": 131,
+    "failed": 0,
+    "warnings": 0,
+    "wp6_passed": 75,
+    "wp7_passed": 56,
+    "head_at_test_gate": "3170af85c96ff1e50c3c9b6541f63d04610d2ddf"
+  },
+  "specialist_verdicts": {
+    "model_researcher": "MODEL_RESEARCH_PASS",
+    "walk_forward_validator": "WFV_WP7_PREHOLDOUT_PASS",
+    "research_ops_engineer": "REPRODUCIBLE",
+    "quant_auditor": "AUDIT_PASS"
+  },
+  "reviewers_were_read_only": true,
+  "reviews_recorded_from_current_verdicts": true,
+  "certification_date_utc": "2026-10-07",
+  "notes": [
+    "Canonical WP7 pre-holdout generation G4 after A1 control-seed remediation at b42e34d; supersessions preserved and resolver is canonical.",
+    "No locked-holdout performance, labels, or rows accessed."
+  ]
+}
