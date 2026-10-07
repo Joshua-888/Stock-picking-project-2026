@@ -1,10 +1,1 @@
-{
-  "schema_version": "wp8_holdout_access_ledger_v1",
-  "holdout_id": "holdout_7ce54e933e16",
-  "state": "AUTHORIZED_NOT_ACCESSED",
-  "access_count": 0,
-  "evaluation_count": 0,
-  "final_candidate_freeze_id": "freeze_e62eac30df40",
-  "wp7_generation_id": "generation_de0f9bbd0bec",
-  "contract_digest": "b294989a2296778f63f85f9f11fda877289e8b829443700af492711f6c61833d"
-}
+{"access_count":1,"completed_evaluation_id":"evaluation_8db863349b51","completed_result_sha256":"26689076bdb58631f1747a7beb922fefbc40de33f0ab2cfaeb950d61f9089be1","contract_digest":"b294989a2296778f63f85f9f11fda877289e8b829443700af492711f6c61833d","evaluation_count":1,"final_candidate_freeze_id":"freeze_e62eac30df40","holdout_id":"holdout_7ce54e933e16","schema_version":"wp8_holdout_access_ledger_v1","started_at":{"start_reason":"authorized-by-mission-one-shot"},"started_code_digest":"913d9fdeafde9ae80e386b0d6ef1de798ae609a4e9291f88eca85304d9bc802a","started_freeze_id":"freeze_e62eac30df40","started_producing_commit":"adf6766edd50fbc9d44fe0b514f14c93349ad158","state":"COMPLETED","wp7_generation_id":"generation_de0f9bbd0bec"}
