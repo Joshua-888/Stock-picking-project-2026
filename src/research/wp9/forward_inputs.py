@@ -41,6 +41,15 @@ INPUT_BINDING_REL = Path("provenance") / "wp8" / "input_binding.json"
 CIK_MAPPING_REL = Path("artifacts") / "research" / "wp4" / "edgar_cik_mapping.json"
 LAYER_RECORDS_REL = Path("artifacts") / "research" / "wp2b_live" / "layer_records.json"
 
+# Live-forward overlay layer names (WP9A). These are a SEPARATE namespace from
+# the certified WP2B silver layers; the certified path is never mutated.
+LIVE_LAYER_RECORDS_REL = Path("artifacts") / "research" / "wp9_live" / "layer_records.json"
+LIVE_PRICES_NAME = "wp9_live_prices"
+LIVE_ACTIONS_NAME = "wp9_live_actions"
+LIVE_MEMBERSHIP_NAME = "wp9_live_membership"
+LIVE_BENCHMARK_NAME = "wp9_live_benchmark_prices"
+LIVE_BENCHMARK_ACTIONS_NAME = "wp9_live_benchmark_actions"
+
 UNIVERSE_ID = "sp500_pit_wikipedia_eodhd_v1"
 
 
@@ -93,6 +102,12 @@ class _ForwardInputBuilder:
     def load_layer_records(self) -> dict:
         return self._json(LAYER_RECORDS_REL)
 
+    def load_live_layer_records(self) -> dict:
+        return self._json(LIVE_LAYER_RECORDS_REL)
+
+    def _load_live_layer_records(self) -> dict:
+        return self.load_live_layer_records()
+
     def load_panel(self):
         frame = layers.read_silver_table(
             self.bronze_root, PANEL_NAME, version=PANEL_VERSION
@@ -123,7 +138,16 @@ class _ForwardInputBuilder:
         frame["ticker"] = "SPY"
         return frame.loc[:, ["security_id", "ticker", "trade_date", "raw_close"]]
 
-    def load_benchmark_actions(self):
+    def load_live_benchmark_prices(self, version: str):
+        frame = layers.read_silver_table(
+            self.bronze_root, LIVE_BENCHMARK_NAME, version=version
+        )
+        frame = frame.copy()
+        frame["security_id"] = "SPY"
+        frame["ticker"] = "SPY"
+        return frame.loc[:, ["security_id", "ticker", "trade_date", "raw_close"]]
+
+    def _certified_benchmark_actions(self):
         import glob
 
         pattern = str(self.root / SPY_BRONZE_REL_GLOB)
@@ -138,6 +162,20 @@ class _ForwardInputBuilder:
                 frame[column] = pd.NA
         frame["security_id"] = "SPY"
         return frame.loc[:, ["security_id", "kind", "effective_date", "numerator", "denominator", "amount"]]
+
+    def _live_benchmark_actions(self, version: str):
+        frame = layers.read_silver_table(
+            self.bronze_root, LIVE_BENCHMARK_ACTIONS_NAME, version=version
+        )
+        for column in ("security_id", "kind", "effective_date", "numerator", "denominator", "amount"):
+            if column not in frame.columns:
+                frame[column] = pd.NA
+        return frame.loc[:, ["security_id", "kind", "effective_date", "numerator", "denominator", "amount"]]
+
+    def load_benchmark_actions(self, live_layer_records=None):
+        if live_layer_records and live_layer_records.get("silver_benchmark_actions"):
+            return self._live_benchmark_actions(str(live_layer_records["silver_benchmark_actions"]))
+        return self._certified_benchmark_actions()
 
     def load_fundamentals_and_cik(self):
         """Load the certified EDGAR input binding path.
@@ -319,7 +357,23 @@ class _ForwardInputBuilder:
         upstream: Dict[str, object],
         snapshot_asof_utc_close: str | None = None,
     ) -> Dict[str, object]:
-        """Record source identity, versions, retrieval metadata, and row counts."""
+        """Record source identity, versions, retrieval metadata, and row counts.
+
+        When ``layer_records`` carries a ``silver_benchmark_prices`` version (the
+        WP9A live-forward overlay), the benchmark section reports the live
+        benchmark table actually consumed. The certified historical path keeps
+        reporting the certified ``benchmark_gold_SPY`` table exactly as before.
+        """
+        if layer_records.get("silver_benchmark_prices"):
+            benchmark_used = {
+                "name": LIVE_BENCHMARK_NAME,
+                "version": str(layer_records["silver_benchmark_prices"]),
+            }
+        else:
+            benchmark_used = {
+                "name": BENCHMARK_NAME,
+                "version": BENCHMARK_VERSION,
+            }
         payload = {
             "schema_version": "wp9_source_manifest_v1",
             "snapshot_asof": snapshot_date,
@@ -340,34 +394,69 @@ class _ForwardInputBuilder:
                 },
                 "sec_edgar": upstream.get("edgar_binding"),
             },
-            "benchmark": {
-                "name": BENCHMARK_NAME,
-                "version": BENCHMARK_VERSION,
-            },
+            "benchmark": benchmark_used,
             "upstream": upstream,
         }
         digest = fingerprint_obj(payload)
         return {"source_manifest_hash": digest, **payload}
 
-    def build(self, snapshot_date: str, *, feature_panel_builder=None) -> "ForwardSnapshotInputs":
+    def build(
+        self,
+        snapshot_date: str,
+        *,
+        feature_panel_builder=None,
+        live_layer_records: Dict[str, object] | None = None,
+        source_data_kind: str | None = None,
+    ) -> "ForwardSnapshotInputs":
         """Build all forward inputs for ``snapshot_date``.
 
         ``feature_panel_builder`` is an injection point for tests; the default is
         the certified :func:`src.research.discovery.panel.build_feature_panel`.
+
+        The default ``live_layer_records=None``/``source_data_kind=None`` path is
+        byte-for-byte the certified WP9 behavior. When an explicit live indicator
+        is present (``source_data_kind == "live"`` or ``live_layer_records`` is
+        provided), the live-forward overlay layer versions are preferred for
+        prices/actions/membership/benchmark, while the frozen fundamentals/CIK
+        binding and the certified :data:`FROZEN_FEATURES` remain unchanged.
         """
         _require_date(snapshot_date)
         if feature_panel_builder is None:
             feature_panel_builder = build_feature_panel
 
+        if live_layer_records is not None:
+            live_layer_records = dict(live_layer_records)
+        elif source_data_kind == "live":
+            live_layer_records = self._load_live_layer_records()
+        else:
+            live_layer_records = None
+
         layer_records = self.load_layer_records()
         close_utc = self._close_utc_for_snapshot(snapshot_date)
-        prices = self.load_prices(str(layer_records["silver_prices"]))
+        if live_layer_records:
+            prices = layers.read_silver_table(
+                self.bronze_root, LIVE_PRICES_NAME, version=str(live_layer_records["silver_prices"])
+            )
+            actions = layers.read_silver_table(
+                self.bronze_root, LIVE_ACTIONS_NAME, version=str(live_layer_records["silver_actions"])
+            )
+            membership = layers.read_silver_table(
+                self.bronze_root, LIVE_MEMBERSHIP_NAME, version=str(live_layer_records["silver_membership"])
+            )
+        else:
+            prices = self.load_prices(str(layer_records["silver_prices"]))
+            actions = self.load_actions(str(layer_records["silver_actions"]))
+            membership = self.load_membership(str(layer_records["silver_membership"]))
         prices = self._admissible_prices_for_close(prices, close_utc)
-        actions = self.load_actions(str(layer_records["silver_actions"]))
-        membership = self.load_membership(str(layer_records["silver_membership"]))
-        benchmark_prices = self.load_benchmark_prices()
+        if live_layer_records:
+            benchmark_prices = self.load_live_benchmark_prices(
+                str(live_layer_records["silver_benchmark_prices"])
+            )
+            benchmark_actions = self.load_benchmark_actions(live_layer_records=live_layer_records)
+        else:
+            benchmark_prices = self.load_benchmark_prices()
+            benchmark_actions = self.load_benchmark_actions()
         benchmark_prices = self._admissible_prices_for_close(benchmark_prices, close_utc)
-        benchmark_actions = self.load_benchmark_actions()
         fundamentals, cik_by_ticker, cik_payload, edgar_binding = self.load_fundamentals_and_cik()
         fundamentals = self._admissible_fundamentals_for_close(fundamentals, close_utc)
 
@@ -417,9 +506,10 @@ class _ForwardInputBuilder:
             "edgar_binding": edgar_binding,
             "cik_mapping": cik_payload.get("mapping"),
         }
+        manifest_records = live_layer_records if live_layer_records else layer_records
         manifest_payload = self.build_source_manifest(
             snapshot_date,
-            layer_records,
+            manifest_records,
             upstream,
             snapshot_asof_utc_close=close_utc.isoformat(),
         )
@@ -464,9 +554,25 @@ def _require_date(value: str) -> str:
     return value
 
 
-def build_forward_inputs(snapshot_date: str, root: Path | None = None) -> ForwardSnapshotInputs:
-    """Materialise certified forward inputs for one snapshot date."""
-    return _ForwardInputBuilder(root=root).build(snapshot_date)
+def build_forward_inputs(
+    snapshot_date: str,
+    root: Path | None = None,
+    *,
+    live_layer_records: Dict[str, object] | None = None,
+    source_data_kind: str | None = None,
+) -> ForwardSnapshotInputs:
+    """Materialise forward inputs for one snapshot date.
+
+    The default certified path is unchanged. Pass ``source_data_kind="live"`` or
+    an explicit ``live_layer_records`` mapping to prefer the WP9A live-forward
+    overlay tables. No feature, target, universe, ranking, or calibration
+    semantics are redefined here.
+    """
+    return _ForwardInputBuilder(root=root).build(
+        snapshot_date,
+        live_layer_records=live_layer_records,
+        source_data_kind=source_data_kind,
+    )
 
 
 __all__ = [
