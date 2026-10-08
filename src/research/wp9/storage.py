@@ -316,6 +316,21 @@ def write_snapshot(
         directory = root / DRY_RUNS_DIR_REL
         index_rel = DRY_RUN_INDEX_REL
 
+    # Fail closed on a second, different snapshot for the same as-of BEFORE
+    # writing the body, so a duplicate attempt can never leave an orphaned
+    # half-canonical evidence file behind. An exact same snapshot_id is an
+    # idempotent rediscovery (verify_and_reuse), not a duplicate-evidence write.
+    index_path = root / index_rel
+    for prior in _load_prediction_index(index_path, PREDICTION_INDEX_SCHEMA)["entries"]:
+        if (
+            prior.get("snapshot_asof") == record.get("snapshot_asof")
+            and prior.get("snapshot_id") != expected_id
+        ):
+            raise Wp9StorageError(
+                "duplicate %s %r cannot be appended to %s"
+                % ("snapshot_asof", record.get("snapshot_asof"), index_path)
+            )
+
     path = directory / ("%s.json" % expected_id)
     outcome = save_immutable(path, record)
     entry = _index_entry(record, bindings, kind, path, root)
