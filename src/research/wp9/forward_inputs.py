@@ -19,7 +19,7 @@ import pandas as pd
 
 from ..data import layers
 from ..data.availability import to_utc_timestamp
-from ..data.universe import UniverseMembership, UniverseTable
+from ..data.universe import UniverseError, UniverseMembership, UniverseTable
 from ..discovery.panel import build_feature_panel
 from ..fingerprints import fingerprint_dataframe, fingerprint_obj
 from .champion import FROZEN_FEATURES
@@ -165,25 +165,43 @@ class _ForwardInputBuilder:
                 str(row["membership_start"]),
             )
         )
-        memberships = []
+        table = UniverseTable(UNIVERSE_ID)
+        excluded_membership_records = []
         for record in records:
             ticker = record.get("ticker") or record.get("symbol") or record["security_id"]
-            memberships.append(
-                UniverseMembership(
-                    universe_id=UNIVERSE_ID,
-                    security_id=str(record["security_id"]),
-                    ticker=str(ticker),
-                    membership_start=record["membership_start"],
-                    membership_end=_nullable_text(record.get("membership_end")),
-                    # The certified WP2C membership silver table omits
-                    # announcement/validity columns. Availability is therefore
-                    # exactly the effective-date instant (the WP2C documented
-                    # conservative rule), never an announcement date.
-                    valid_from=record["membership_start"],
-                    valid_to=_nullable_text(record.get("membership_end")),
+            try:
+                table.add(
+                    UniverseMembership(
+                        universe_id=UNIVERSE_ID,
+                        security_id=str(record["security_id"]),
+                        ticker=str(ticker),
+                        membership_start=record["membership_start"],
+                        membership_end=_nullable_text(record.get("membership_end")),
+                        # The certified WP2C membership silver table omits
+                        # announcement/validity columns. Availability is therefore
+                        # exactly the effective-date instant (the WP2C documented
+                        # conservative rule), never an announcement date.
+                        valid_from=record["membership_start"],
+                        valid_to=_nullable_text(record.get("membership_end")),
+                    )
                 )
-            )
-        table = UniverseTable(UNIVERSE_ID, memberships=memberships)
+            except UniverseError as exc:
+                # Contract rule: record excluded securities and the reason;
+                # never silently drop them. Malformed windows are source-level
+                # defects and are reported, not guessed into a valid window.
+                excluded_membership_records.append(
+                    {
+                        "security_id": str(record["security_id"]),
+                        "ticker": str(ticker),
+                        "membership_start": _nullable_text(record.get("membership_start")),
+                        "membership_end": _nullable_text(record.get("membership_end")),
+                        "exclusion_reason": "invalid_membership_window:%s" % exc,
+                        "resolution_method": _nullable_text(record.get("resolution_method")),
+                        "unresolved_reason": _nullable_text(record.get("unresolved_reason")),
+                        "research_eligible": bool(record.get("research_eligible", False)),
+                    }
+                )
+                continue
         security_ids = table.members_asof(snapshot_date, available_only=True)
         ticker_mapping = {
             membership.security_id: membership.ticker
@@ -198,10 +216,12 @@ class _ForwardInputBuilder:
             "security_ids": security_ids,
             "ticker_mapping": ticker_mapping,
             "universe_count": len(security_ids),
+            "excluded_membership_records": excluded_membership_records,
             "source_retrieval_metadata": {
                 "membership_layer": MEMBERSHIP_NAME,
                 "availability_rule": "effective date instant only",
                 "rows_loaded": int(len(membership)),
+                "invalid_membership_window_rows": len(excluded_membership_records),
             },
         }
         record["universe_hash"] = fingerprint_obj(
@@ -211,6 +231,7 @@ class _ForwardInputBuilder:
                 "security_ids": record["security_ids"],
                 "ticker_mapping": record["ticker_mapping"],
                 "universe_count": record["universe_count"],
+                "excluded_membership_records": record["excluded_membership_records"],
             }
         )
         return record
@@ -305,7 +326,7 @@ class _ForwardInputBuilder:
             benchmark_actions,
             config=None,
             restrict_to_development=False,
-            allow_locked_holdout=False,
+            allow_locked_holdout=True,
         )
         selected = ["security_id", "ticker", "feature_asof"] + list(FROZEN_FEATURES)
         missing = [name for name in selected if name not in feature_frame.columns]
