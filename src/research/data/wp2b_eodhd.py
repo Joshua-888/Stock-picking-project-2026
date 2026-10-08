@@ -492,6 +492,23 @@ def reconstruct_memberships(change_frame, current_constituents, window_start, wi
     guarded = [_apply_listing_guard(window, listing.get(window.security_id)) for window in windows]
     selected = [window for window in guarded if window.overlaps(window_start, window_end)]
     selected = [window.clipped(window_start, window_end) for window in selected]
+    # WP2C-A1/A3 identity bookkeeping: a CURRENT constituent whose source-known
+    # effective add date falls after the research window end has no in-window
+    # overlapping window and must still be accounted for. Keep its ongoing identity
+    # record with its factual start date (never backdated), but mark it
+    # research-ineligible so it cannot enter historical research cross-sections or
+    # panel rows. The record still flows through per-window symbol resolution (A2)
+    # and the A1 hard gate.
+    window_end_ts = to_utc_timestamp(window_end)
+    post_window_identities = [
+        replace(window, research_eligible=False)
+        for window in guarded
+        if window.membership_end is None
+        and to_utc_timestamp(window.membership_start) is not None
+        and window_end_ts is not None
+        and to_utc_timestamp(window.membership_start) > window_end_ts
+    ]
+    selected.extend(post_window_identities)
     selected.sort(key=lambda window: (window.security_id, window.membership_start))
     return selected, assumed_starts
 

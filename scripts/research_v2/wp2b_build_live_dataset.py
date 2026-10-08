@@ -173,10 +173,16 @@ def _probe_first_date(provider, code, first_cache, price_cache):
     return first
 
 
-def _unresolved_reason(security_id, symbol_index):
-    candidates = wp2b.symbol_candidates(security_id, symbol_index)
+def _unresolved_reason(window, symbol_index):
+    candidates = wp2b.symbol_candidates(window.security_id, symbol_index)
     if not candidates:
         return "no_symbol_candidates_in_vendor"
+    if (window.membership_end is None
+            and str(window.membership_start)[:10] > wp2b.RESEARCH_WINDOW_END):
+        # A post-window-only current constituent is a valid identity record but can
+        # never appear in a research cross-section; the factual limitation is its
+        # membership start, not symbol ambiguity.
+        return "membership_starts_after_research_window_end"
     return "ambiguous_no_discriminating_evidence"
 
 
@@ -208,7 +214,7 @@ def resolve_windows(windows, symbol_index, provider, name_hints, active_codes, p
             resolutions.append({
                 "security_id": window.security_id, "membership_start": window.membership_start,
                 "membership_end": window.membership_end, "symbol": None, "resolved": False,
-                "method": None, "reason": _unresolved_reason(window.security_id, symbol_index),
+                "method": None, "reason": _unresolved_reason(window, symbol_index),
                 "candidates": candidates, "name_hint": name_hints.get(window.security_id),
             })
         else:
