@@ -27,6 +27,8 @@ from ..data.availability import price_available_at, to_utc_timestamp
 ROOT = Path(__file__).resolve().parents[3]
 LAYER_RECORDS_REL = Path("artifacts") / "research" / "wp2b_live" / "layer_records.json"
 PRICES_NAME = "wp2b_sp500_pit_prices_silver"
+LIVE_LAYER_RECORDS_REL = Path("artifacts") / "research" / "wp9_live" / "layer_records.json"
+LIVE_PRICES_NAME = "wp9_live_prices"
 
 
 class TemporalGateError(RuntimeError):
@@ -71,6 +73,40 @@ def bound_price_trade_dates(root: Path | None = None) -> list[str]:
     dates = sorted({str(value)[:10] for value in frame["trade_date"] if pd.notna(value)})
     if not dates:
         raise TemporalGateError("bound certified price series has no trade dates")
+    return dates
+
+
+def live_price_trade_dates(root: Path | None = None) -> list[str]:
+    """Return sorted unique trade dates from the WP9A live-forward price table.
+
+    Reads ``artifacts/research/wp9_live/layer_records.json`` and the referenced
+    ``wp9_live_prices`` parquet version. Missing or empty records/tables fail
+    closed so a live-mode cadence source cannot silently fall back to a stale
+    or fabricated series.
+    """
+    root = Path(root or ROOT)
+    records_path = root / LIVE_LAYER_RECORDS_REL
+    if not records_path.is_file():
+        raise TemporalGateError("missing WP9 live layer records: %s" % records_path)
+    try:
+        records = json.loads(records_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise TemporalGateError("invalid WP9 live layer records at %s: %s" % (records_path, exc)) from exc
+    version = records.get("silver_prices")
+    if not version:
+        raise TemporalGateError("WP9 live layer records have no silver_prices version")
+    data_root = root / "data" / "research_v2"
+    version_dir = layers.layer_root(data_root, "silver", LIVE_PRICES_NAME) / str(version)
+    table_path = version_dir / "data.parquet"
+    if not table_path.is_file():
+        raise TemporalGateError("WP9 live price series is missing: %s" % table_path)
+    try:
+        frame = pd.read_parquet(table_path, columns=["trade_date"])
+    except Exception as exc:  # pragma: no cover - malformed live artifact
+        raise TemporalGateError("cannot read WP9 live price series: %s" % exc) from exc
+    dates = sorted({str(value)[:10] for value in frame["trade_date"] if pd.notna(value)})
+    if not dates:
+        raise TemporalGateError("WP9 live price series has no trade dates")
     return dates
 
 
@@ -245,6 +281,21 @@ def first_eligible_official_snapshot_date(
             "status": "NOT_READY",
             "reason": "no_trade_dates_in_first_full_month_after_freeze",
         }
+    # A date inside ``candidate_month`` can still be on or before the freeze
+    # instant (e.g. freeze late in the month with only an earlier session in
+    # that month's series). Its conservative UTC close must be strictly after
+    # the freeze before that month can ever be READY, even when following-month
+    # data exists. Never silently advance here; the caller may advance one
+    # whole candidate month deterministically and re-evaluate.
+    latest_instant = price_available_at(latest)
+    if latest_instant is None or latest_instant <= freeze:
+        return {
+            "eligible": False,
+            "candidate_month": candidate_month,
+            "first_eligible_date": latest,
+            "status": "NOT_READY",
+            "reason": "first_eligible_date_not_after_freeze",
+        }
     if month_has_following_data(candidate_month, dates):
         return {
             "eligible": True,
@@ -272,5 +323,6 @@ __all__ = [
     "first_eligible_official_snapshot_date",
     "last_business_day_for_month",
     "last_eligible_score_date_for_month",
+    "live_price_trade_dates",
     "month_has_following_data",
 ]

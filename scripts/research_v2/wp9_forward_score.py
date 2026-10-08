@@ -83,6 +83,7 @@ from src.research.wp9.temporal_gate import (  # noqa: E402
     closing_utc_for_asof,
     current_utc,
     last_eligible_score_date_for_month,
+    live_price_trade_dates,
 )
 
 SCHEMA_VERSION = "wp9_forward_validation_predictions_v1"
@@ -210,16 +211,32 @@ def assert_asof_after_freeze(asof: str, contract: Wp9Contract, root: Path) -> No
         )
 
 
-def assert_monthly_cadence(asof: str, root: Path | None = None) -> str:
-    """Reject any official as-of that is not that month's last certified score date.
+def assert_monthly_cadence(
+    asof: str,
+    root: Path | None = None,
+    *,
+    live: bool = False,
+) -> str:
+    """Reject any official as-of that is not that month's last eligible score date.
 
-    Official cadence is resolved from the bound silver price series only, never
-    a fuzzy holiday calendar and never a calendar month-end. A weekend/holiday
-    month-end that has no certified trading session is rejected.
+    ``live=False`` keeps the exact certified behavior: cadence is resolved from
+    the bound silver price series only. ``live=True`` is an explicit operational
+    opt-in for post-freeze official snapshots and resolves cadence from the
+    deduplicated union of the bound certified trade dates and the separate
+    WP9A live-forward price trade dates. It never weakens the hard gates: the
+    as-of must still equal the exact last eligible date, be strictly after the
+    contract freeze, and pass future/backfill/duplicate checks. Missing/empty
+    live records fail closed rather than falling back to the stale cert series.
     """
     root = Path(root or ROOT)
     try:
-        trade_dates = bound_price_trade_dates(root)
+        if live:
+            trade_dates = sorted(
+                set(bound_price_trade_dates(root))
+                | set(live_price_trade_dates(root))
+            )
+        else:
+            trade_dates = bound_price_trade_dates(root)
         eligible = last_eligible_score_date_for_month(asof, trade_dates)
     except TemporalGateError as exc:
         raise Wp9ScoringError(
@@ -335,6 +352,8 @@ def assert_clean_producing_worktree(root: Path) -> str:
 def preflight_official(
     asof: str,
     root: Path,
+    *,
+    live: bool = False,
 ) -> Tuple[Wp9Contract, str]:
     """Fail-closed official-mode preflight. Returns ``(contract, code_commit)``."""
     try:
@@ -345,7 +364,7 @@ def preflight_official(
         ) from exc
     assert_contract_bytes_committed(contract, root)
     assert_asof_after_freeze(asof, contract, root)
-    assert_monthly_cadence(asof, root)
+    assert_monthly_cadence(asof, root, live=live)
     assert_no_backfill(asof, root)
     assert_asof_not_in_future(asof)
     assert_no_duplicate_snapshot(asof, root)
@@ -518,7 +537,7 @@ def execute(
     official = mode == OFFICIAL_MODE_TOKEN
 
     if official:
-        contract, code_commit = preflight_official(asof, root)
+        contract, code_commit = preflight_official(asof, root, live=live)
     else:
         contract = load_wp9_contract(root=root)
         # Dry-run also records the current HEAD, but a dirty worktree does not

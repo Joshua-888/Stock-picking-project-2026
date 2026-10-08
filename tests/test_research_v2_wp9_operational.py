@@ -276,6 +276,58 @@ def test_resolver_date_before_freeze_month_not_available():
     assert result["candidate_month"] == "2026-11"
 
 
+def test_resolver_latest_at_or_before_freeze_not_eligible():
+    freeze = "2026-10-28T21:59:03Z"
+    trade_dates = ["2026-10-27", "2026-11-03", "2026-11-04"]
+    result = temporal_gate_mod.first_eligible_official_snapshot_date(freeze, trade_dates)
+    assert result["eligible"] is False
+    assert result["status"] == "NOT_READY"
+    assert result["candidate_month"] == "2026-10"
+    assert result["first_eligible_date"] == "2026-10-27"
+    assert result["reason"] == "first_eligible_date_not_after_freeze"
+
+
+def test_resolver_eligible_when_latest_close_is_after_freeze():
+    freeze = "2026-10-01T00:00:00Z"
+    trade_dates = ["2026-10-30", "2026-11-02"]
+    result = temporal_gate_mod.first_eligible_official_snapshot_date(freeze, trade_dates)
+    assert result["eligible"] is True
+    assert result["status"] == "READY"
+    assert result["first_eligible_date"] == "2026-10-30"
+
+
+def test_resolver_candidate_advances_to_next_month_after_freeze():
+    freeze = "2026-10-31T21:00:00Z"
+    trade_dates = ["2026-10-30", "2026-11-03", "2026-11-04"]
+    result = temporal_gate_mod.first_eligible_official_snapshot_date(freeze, trade_dates)
+    assert result["eligible"] is False
+    assert result["candidate_month"] == "2026-11"
+
+
+def test_live_membership_uses_retrieval_date_not_invented_start():
+    resolutions = [
+        {
+            "security_id": "AAPL",
+            "ticker": "AAPL",
+            "method": "index_symbol",
+            "resolved": True,
+            "reason": None,
+        },
+        {
+            "security_id": "ZZZ",
+            "ticker": "ZZZ",
+            "method": None,
+            "resolved": False,
+            "reason": "missing_symbol_index",
+        },
+    ]
+    frame = REFRESH.build_live_membership(resolutions, as_of="2026-10-08")
+    assert "1900-01-01" not in set(frame["membership_start"])
+    assert set(frame["membership_start"]) == {"2026-10-08"}
+    assert frame["start_known"].eq(False).all()
+    assert set(frame["membership_start_source"]) == {"current_sp500_list_retrieval_date"}
+
+
 # ── B: live overlay + certified reproducibility ─────────────────────────────
 
 

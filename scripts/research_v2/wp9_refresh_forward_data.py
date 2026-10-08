@@ -317,12 +317,14 @@ def fetch_market_for_symbol(
     return prices, actions
 
 
-def build_live_membership(resolutions: list[dict]) -> pd.DataFrame:
+def build_live_membership(resolutions: list[dict], *, as_of: str) -> pd.DataFrame:
     """Build a current membership table in the certified membership row shape.
 
-    The current list provides no add date, so ``membership_start`` is the
-    snapshot-safe conservative lower bound. ``start_known=False`` and
-    ``research_eligible=False`` make the provenance of that assumption explicit.
+    The current list provides no historical add date, so ``membership_start`` is
+    set to the live refresh ``as_of`` retrieval date. This is a source-known
+    lower bound, not an invented open-ended start: ``start_known=False`` and
+    ``membership_start_source="current_sp500_list_retrieval_date"`` make the
+    assumption explicit and never grant pre-window membership.
     """
     rows = []
     for item in resolutions:
@@ -330,8 +332,10 @@ def build_live_membership(resolutions: list[dict]) -> pd.DataFrame:
             {
                 "security_id": item["security_id"],
                 "ticker": item["ticker"],
-                "membership_start": "1900-01-01",
+                "membership_start": as_of,
                 "membership_end": None,
+                "start_known": False,
+                "membership_start_source": "current_sp500_list_retrieval_date",
                 "resolution_method": item["method"] if item["resolved"] else None,
                 "unresolved_reason": item["reason"] if not item["resolved"] else None,
                 "source": "wikipedia:list_of_sp500_companies",
@@ -411,7 +415,7 @@ def run(asof: str | None, root: Path | None = None) -> dict:
         if action_frames
         else pd.DataFrame(columns=list(ACTION_FIELDS))
     )
-    membership = build_live_membership(resolutions)
+    membership = build_live_membership(resolutions, as_of=_bound_date(bound))
 
     # SPY benchmark is a dedicated live table so the overlay can prefer it while
     # the certified benchmark_gold_SPY table remains untouched.

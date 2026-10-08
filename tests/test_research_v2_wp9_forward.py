@@ -408,6 +408,30 @@ def _write_certified_price_series(root: Path, trade_dates, version="b" * 16):
     return root
 
 
+def _write_live_price_series(root: Path, trade_dates, version="l" * 16):
+    """Deterministic WP9 live-forward silver price-series fixture."""
+    records_path = (
+        root / "artifacts" / "research" / "wp9_live" / "layer_records.json"
+    )
+    records_path.parent.mkdir(parents=True, exist_ok=True)
+    records_path.write_text(
+        json.dumps({"silver_prices": version}), encoding="utf-8"
+    )
+    table_dir = (
+        root
+        / "data"
+        / "research_v2"
+        / "silver"
+        / "wp9_live_prices"
+        / version
+    )
+    table_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"trade_date": list(trade_dates)}).to_parquet(
+        table_dir / "data.parquet", index=False
+    )
+    return root
+
+
 def _source_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -666,7 +690,9 @@ def test_official_mode_registry_append_semantics_unchanged(tmp_path, monkeypatch
         root=root,
     )
     monkeypatch.setattr(
-        SCORER, "preflight_official", lambda asof, root: (contract, CODE_COMMIT)
+        SCORER,
+        "preflight_official",
+        lambda asof, root, live=False: (contract, CODE_COMMIT),
     )
     monkeypatch.setattr(SCORER, "load_champion", lambda root=None: _execute_champion())
     _bindings, inputs = _forward_inputs(contract)
@@ -834,6 +860,42 @@ def test_holiday_calendar_month_end_rejected_as_invalid_cadence(tmp_path):
     )
     with pytest.raises(SCORER.Wp9ScoringError, match="asof_not_last_eligible_score_date"):
         SCORER.assert_monthly_cadence("2026-11-30", root)
+
+
+def test_cert_only_cadence_rejects_post_freeze_when_cert_ends_september(tmp_path):
+    # The bound certified series ends 2026-09-25, so a post-freeze October as-of
+    # can never pass the cert-only cadence gate.
+    root = _write_certified_price_series(tmp_path, ["2026-09-25"])
+    with pytest.raises(SCORER.Wp9ScoringError, match="asof_invalid_monthly_cadence"):
+        SCORER.assert_monthly_cadence("2026-10-31", root, live=False)
+
+
+def test_live_cadence_accepts_last_combined_live_date_with_following_month(tmp_path):
+    # Certified history ends 2026-09-25; live overlay continues into November.
+    # Combined series makes October 30 the exact last eligible live score date.
+    root = _write_certified_price_series(tmp_path, ["2026-09-25"])
+    _write_live_price_series(
+        root,
+        ["2026-10-29", "2026-10-30", "2026-11-02"],
+    )
+    eligible = SCORER.assert_monthly_cadence("2026-10-30", root, live=True)
+    assert eligible == "2026-10-30"
+
+
+def test_live_cadence_rejects_earlier_same_month_date(tmp_path):
+    root = _write_certified_price_series(tmp_path, ["2026-09-25"])
+    _write_live_price_series(
+        root,
+        ["2026-10-29", "2026-10-30", "2026-11-02"],
+    )
+    with pytest.raises(SCORER.Wp9ScoringError, match="asof_not_last_eligible_score_date"):
+        SCORER.assert_monthly_cadence("2026-10-29", root, live=True)
+
+
+def test_live_cadence_missing_live_records_fails_closed(tmp_path):
+    root = _write_certified_price_series(tmp_path, ["2026-09-25"])
+    with pytest.raises(SCORER.Wp9ScoringError, match="asof_invalid_monthly_cadence"):
+        SCORER.assert_monthly_cadence("2026-10-30", root, live=True)
 
 
 def test_out_of_order_official_asof_rejected(tmp_path):
