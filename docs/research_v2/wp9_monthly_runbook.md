@@ -59,26 +59,28 @@ The snapshot date is the **last eligible trading/score date of the intended
 month** and must be **strictly after the contract freeze commit timestamp**.
 It must not backdate or backfill any earlier month.
 
-Validate the calendar cadence and freeze ordering before proceeding:
+Validate cadence and freeze ordering before proceeding. Do not use the calendar-only
+`monthly_cadence_is_valid` helper for official cadence; route official cadence
+through the scorer's fail-closed preflight, which resolves the exact last
+eligible certified trading/score date for the month from the bound silver price
+series (never a fuzzy holiday calendar or plain calendar month-end):
 
 ```bash
 PYTHONPATH=. /opt/venv/bin/python - <<'PY'
 from pathlib import Path
-from src.research.wp9.contract import (
-    load_wp9_contract,
-    monthly_cadence_is_valid,
-    contract_freeze_timestamp,
-)
-import pandas as pd
+from scripts.research_v2.wp9_forward_score import preflight_official
 root = Path('.')
-contract = load_wp9_contract(root=root)
-asof = 'YYYY-MM-DD'  # replace with the intended month-end date
-freeze = pd.Timestamp(contract_freeze_timestamp(contract, root=root)).tz_convert('UTC')
-stamp = pd.Timestamp(asof).tz_localize('UTC')
-print('cadence_valid', monthly_cadence_is_valid(asof))
-print('strictly_after_freeze', stamp > freeze)
+asof = 'YYYY-MM-DD'  # replace with the intended last certified trading/score date
+contract, code_commit = preflight_official(asof, root=root)
+print('freeze_commit', contract.get('prospective', 'contract_freeze_commit'))
+print('official_preflight_ok', code_commit is not None)
 PY
 ```
+
+Provenance note: corrected `contract_freeze_commit` is
+`c96559cf2eb7c65e2c15c4f8014a77faf2a8f4d3` (the reachable commit containing the
+authoritative contract bytes). Supersession record:
+`provenance/wp9/corrections/contract_v1_freeze_commit_001.json`.
 
 ### Step 4 — Confirm no duplicate official snapshot exists
 

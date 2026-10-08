@@ -1,0 +1,16 @@
+{
+  "schema_version": "wp9_contract_correction_v1",
+  "superseded_by_this_reason": "prospective.contract_freeze_commit previously referenced b1ea1790012b97a75f59c858271bf33c2e177756, an orphan pre-amend bootstrap commit unreachable from any ref and absent from a fresh clone. The authoritative contract bytes live in reachable commit c96559cf2eb7c65e2c15c4f8014a77faf2a8f4d3. Provenance-only operational correction made before any official snapshot; no scientific, calibration, champion, target, feature, holdout, or economic rule was changed.",
+  "old_contract_digest": "f501031350a0d80b57445b1616ed8c64757a761c3ddcda86c1342a570798719e",
+  "old_freeze_commit": "b1ea1790012b97a75f59c858271bf33c2e177756",
+  "new_contract_digest": "b18baa261248245a39649bba77be981d0b025a5730adbce0863f81b89a788eeb",
+  "new_freeze_commit": "c96559cf2eb7c65e2c15c4f8014a77faf2a8f4d3",
+  "old_contract_commit": "c96559cf2eb7c65e2c15c4f8014a77faf2a8f4d3",
+  "new_contract_commit": "committed_as_of_empty",
+  "changed_fields": [
+    "prospective.contract_freeze_commit"
+  ],
+  "no_official_snapshots_existed": true,
+  "invalidated_scope": [],
+  "created_at_utc": "2026-10-08T18:45:50Z"
+}

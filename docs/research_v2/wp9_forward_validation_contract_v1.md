@@ -71,7 +71,7 @@
 - `primary_human_output`: `rank`, `percentile`, `frozen_calibrated_score`
 - `cadence`: `monthly`
 - `official_snapshot_rule`: first full monthly scoring date (last eligible trading/score date) strictly AFTER this contract's freeze commit timestamp; no backdating; no official snapshot may be backfilled
-- `contract_freeze_commit`: set to the actual git commit that contains this contract
+- `contract_freeze_commit`: `c96559cf2eb7c65e2c15c4f8014a77faf2a8f4d3` — the reachable commit that actually contains the authoritative pre-edit contract bytes. Supersedes the orphan pre-amend bootstrap commit `b1ea1790012b97a75f59c858271bf33c2e177756`; correction record: `provenance/wp9/corrections/contract_v1_freeze_commit_001.json`
 - `target_horizon_months`: 12
 - `maturity_rule`: snapshot matures only when target_known_at per `target_set_d2bb16610bce` availability semantics is <= evaluation run date
 

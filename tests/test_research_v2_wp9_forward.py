@@ -13,6 +13,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -71,6 +72,7 @@ from src.research.wp9.contract import (  # noqa: E402
     CONTRACT_VERSION,
     SCHEMA_VERSION,
     Wp9ContractError,
+    contract_freeze_timestamp,
     load_wp9_contract,
     monthly_cadence_is_valid,
 )
@@ -408,6 +410,49 @@ def _write_certified_price_series(root: Path, trade_dates, version="b" * 16):
 
 def _source_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+# ── 0. Contract freeze commit resolves from reachable refs only ────────────────
+
+def test_wp9_contract_freeze_commit_is_reachable_from_refs():
+    """Corrected freeze commit must resolve in a clean/fresh-clone ref graph.
+
+    The legacy pre-amend bootstrap commit may exist as a loose object in this
+    worktree, but a fresh clone only contains objects reachable from refs.
+    ``git rev-list --all`` approximates that fresh-clone graph: the corrected
+    commit must appear and the orphan bootstrap commit must not.
+    """
+    corrected = "c96559cf2eb7c65e2c15c4f8014a77faf2a8f4d3"
+    orphan = "b1ea1790012b97a75f59c858271bf33c2e177756"
+    new_digest = "b18baa261248245a39649bba77be981d0b025a5730adbce0863f81b89a788eeb"
+    old_digest = "f501031350a0d80b57445b1616ed8c64757a761c3ddcda86c1342a570798719e"
+
+    contract = load_wp9_contract(root=REPO_ROOT)
+    assert contract.get("prospective", "contract_freeze_commit") == corrected
+    assert contract.digest == new_digest
+    assert contract.digest != old_digest
+
+    freeze_at = contract_freeze_timestamp(contract, root=REPO_ROOT)
+    assert freeze_at and "T" in freeze_at
+
+    cat = subprocess.run(
+        ["git", "cat-file", "-t", corrected],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert cat.stdout.strip() == "commit"
+
+    reachable = subprocess.run(
+        ["git", "rev-list", "--all"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.splitlines()
+    assert corrected in reachable
+    assert orphan not in reachable
 
 
 # ── 1. WP8 consumed holdout cannot be reused as official WP9 evidence ─────────
