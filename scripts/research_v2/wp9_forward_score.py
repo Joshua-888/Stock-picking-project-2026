@@ -503,8 +503,15 @@ def execute(
     root: Path,
     inputs: ForwardSnapshotInputs | None = None,
     champion: FrozenChampion | None = None,
+    live: bool = False,
 ) -> Dict[str, Any]:
-    """Run one scoring snapshot, returning a machine-readable evidence summary."""
+    """Run one scoring snapshot, returning a machine-readable evidence summary.
+
+    ``live=True`` is an explicit operational opt-in that builds inputs from the
+    separate WP9A live-forward layer overlay instead of the certified frozen
+    historical layers. It changes no feature, target, universe, ranking, or
+    calibration semantics.
+    """
     if mode not in (OFFICIAL_MODE_TOKEN, DRY_RUN_MODE_TOKEN):
         raise Wp9ScoringError("unknown scoring mode %r" % mode)
     root = Path(root)
@@ -519,7 +526,11 @@ def execute(
         code_commit = current_git_commit(str(root)) or "<unavailable>"
     champion = champion or load_champion(root=root)
     if inputs is None:
-        inputs = build_forward_inputs(asof, root=root)
+        inputs = build_forward_inputs(
+            asof,
+            root=root,
+            source_data_kind="live" if live else None,
+        )
 
     created_at_utc = dt.datetime.now(dt.timezone.utc).isoformat()
     payload = score_frame(contract, champion, inputs, code_commit, created_at_utc)
@@ -597,6 +608,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     group.add_argument("--dry-run", action="store_true", help="non-evidentiary rehearsal output")
     group.add_argument("--official", action="store_true", help="write an immutable official snapshot")
     parser.add_argument("--as-of", help="snapshot date YYYY-MM-DD")
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="build inputs from the separate WP9A live-forward layer overlay",
+    )
     parser.add_argument("--root", default=str(ROOT), help="repository root")
     return parser.parse_args(argv)
 
@@ -614,7 +630,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         asof = args.as_of
     try:
-        result = execute(mode=mode, asof=asof, root=root)
+        result = execute(mode=mode, asof=asof, root=root, live=bool(args.live))
     except (Wp9ScoringError, Wp9ContractError, Wp9StorageError, ForwardInputError) as exc:
         print("SCORING_BLOCKED %s" % exc)
         return 1
