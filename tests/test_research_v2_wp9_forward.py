@@ -49,6 +49,9 @@ EVALUATOR = _load_module(
 from src.research import immutability as immutability_mod  # noqa: E402
 from src.research.data.availability import (  # noqa: E402
     UnavailableError,
+    fundamental_available_at,
+    is_available,
+    price_available_at,
     require_available,
 )
 from src.research.fingerprints import fingerprint_file  # noqa: E402
@@ -375,6 +378,34 @@ def _feature_frame(rows=3):
     )
 
 
+def _write_certified_price_series(root: Path, trade_dates, version="b" * 16):
+    """Deterministic bound-certified silver price-series fixture.
+
+    Exercises the real ``bound_price_trade_dates`` path without live data or a
+    wall-clock calendar.
+    """
+    records_path = (
+        root / "artifacts" / "research" / "wp2b_live" / "layer_records.json"
+    )
+    records_path.parent.mkdir(parents=True, exist_ok=True)
+    records_path.write_text(
+        json.dumps({"silver_prices": version}), encoding="utf-8"
+    )
+    table_dir = (
+        root
+        / "data"
+        / "research_v2"
+        / "silver"
+        / "wp2b_sp500_pit_prices_silver"
+        / version
+    )
+    table_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"trade_date": list(trade_dates)}).to_parquet(
+        table_dir / "data.parquet", index=False
+    )
+    return root
+
+
 def _source_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -621,6 +652,111 @@ def test_feature_availability_respected():
     history = FundamentalHistory.from_frame(fundamentals)
     # The only filing becomes public after the as-of, so it must be unavailable.
     assert history.latest_value("1", "eps", "2026-10-01") is None
+
+
+def test_weekend_calendar_month_end_rejected_as_invalid_cadence(tmp_path):
+    root = _write_certified_price_series(
+        tmp_path,
+        ["2026-10-28", "2026-10-29", "2026-10-30"],
+    )
+    with pytest.raises(SCORER.Wp9ScoringError, match="asof_not_last_eligible_score_date"):
+        SCORER.assert_monthly_cadence("2026-10-31", root)
+
+
+def test_holiday_calendar_month_end_rejected_as_invalid_cadence(tmp_path):
+    root = _write_certified_price_series(
+        tmp_path,
+        ["2026-11-25", "2026-11-27"],
+    )
+    with pytest.raises(SCORER.Wp9ScoringError, match="asof_not_last_eligible_score_date"):
+        SCORER.assert_monthly_cadence("2026-11-30", root)
+
+
+def test_out_of_order_official_asof_rejected(tmp_path):
+    root = _write_certified_price_series(
+        tmp_path,
+        ["2026-09-25", "2026-09-26", "2026-09-30", "2026-10-30", "2026-10-31"],
+    )
+    index = root / "provenance" / "wp9" / "predictions" / "index.json"
+    index.parent.mkdir(parents=True, exist_ok=True)
+    immutability_mod.write_json_atomic(
+        index,
+        {
+            "schema_version": storage_mod.PREDICTION_INDEX_SCHEMA,
+            "entries": [{"snapshot_asof": "2026-10-31"}],
+        },
+    )
+    with pytest.raises(
+        SCORER.Wp9ScoringError,
+        match="asof_not_after_latest_official_snapshot_month",
+    ):
+        SCORER.assert_no_backfill("2026-09-30", root)
+
+
+def test_no_backfill_month_rejected(tmp_path):
+    root = _write_certified_price_series(
+        tmp_path,
+        ["2026-09-25", "2026-09-26", "2026-09-30"],
+    )
+    index = root / "provenance" / "wp9" / "predictions" / "index.json"
+    index.parent.mkdir(parents=True, exist_ok=True)
+    immutability_mod.write_json_atomic(
+        index,
+        {
+            "schema_version": storage_mod.PREDICTION_INDEX_SCHEMA,
+            "entries": [{"snapshot_asof": "2026-09-30"}],
+        },
+    )
+    with pytest.raises(
+        SCORER.Wp9ScoringError,
+        match="asof_not_after_latest_official_snapshot_month",
+    ):
+        SCORER.assert_no_backfill("2026-09-30", root)
+
+
+def test_future_close_utc_rejected_with_injectable_now(tmp_path):
+    root = _write_certified_price_series(tmp_path, ["2026-09-25"])
+    now = pd.Timestamp("2026-09-30T20:00:00+00:00")
+    with pytest.raises(SCORER.Wp9ScoringError, match="asof_in_future_relative_to_eligibility_policy"):
+        SCORER.assert_asof_not_in_future("2026-09-30", now_utc=now)
+
+
+def test_same_day_filing_not_admitted_for_midnight_asof():
+    builder = _ForwardInputBuilder(root=REPO_ROOT)
+    midnight = pd.Timestamp("2026-10-01T00:00:00+00:00")
+    fundamentals = pd.DataFrame(
+        [{
+            "cik": "1",
+            "field": "eps",
+            "value": 2.0,
+            "fiscal_period_start": "2026-06-01",
+            "fiscal_period_end": "2026-09-30",
+            "filing_date": "2026-10-01",
+            "available_at": fundamental_available_at(
+                "2026-10-01", acceptance_datetime="2026-10-01T19:00:00+00:00"
+            ),
+            "accession": "same-day",
+            "form": "10-Q",
+        }]
+    )
+    filtered = builder._admissible_fundamentals_for_close(fundamentals, midnight)
+    assert len(filtered) == 0
+
+
+def test_same_day_price_admitted_only_at_or_after_close(tmp_path):
+    builder = _ForwardInputBuilder(root=REPO_ROOT)
+    prices = pd.DataFrame({"security_id": ["A"], "trade_date": ["2026-10-01"]})
+    close = pd.Timestamp("2026-10-01T21:00:00+00:00")
+    before = builder._admissible_prices_for_close(
+        prices, pd.Timestamp("2026-10-01T20:59:59+00:00")
+    )
+    at = builder._admissible_prices_for_close(prices, close)
+    assert len(before) == 0
+    assert len(at) == 1
+    # Admissions respect availability-instance semantics, not whole-day ordinals.
+    available_at = price_available_at("2026-10-01")
+    assert is_available(available_at, pd.Timestamp("2026-10-01T20:59:59+00:00")) is False
+    assert is_available(available_at, close) is True
 
 
 # ── 17-18. Deterministic ranking ─────────────────────────────────────────────

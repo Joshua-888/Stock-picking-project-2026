@@ -18,11 +18,12 @@ from typing import Dict
 import pandas as pd
 
 from ..data import layers
-from ..data.availability import to_utc_timestamp
+from ..data.availability import price_available_at, to_utc_timestamp
 from ..data.universe import UniverseError, UniverseMembership, UniverseTable
 from ..discovery.panel import build_feature_panel
 from ..fingerprints import fingerprint_dataframe, fingerprint_obj
 from .champion import FROZEN_FEATURES
+from .temporal_gate import TemporalGateError, closing_utc_for_asof
 
 ROOT = Path(__file__).resolve().parents[3]
 BRONZE_ROOT = ROOT / "data" / "research_v2"
@@ -69,6 +70,11 @@ class ForwardSnapshotInputs:
     @property
     def feature_snapshot_hash(self) -> str:
         return str(self.source_manifest["feature_snapshot_hash"])
+
+    @property
+    def snapshot_asof_utc_close(self) -> str:
+        """Conservative UTC close instant stamped into diagnostic provenance."""
+        return str(self.source_manifest.get("snapshot_asof_utc_close"))
 
 
 class _ForwardInputBuilder:
@@ -149,6 +155,51 @@ class _ForwardInputBuilder:
         fundamentals = load_and_verify_edgar_fundamentals(self.root, binding)
         cik_by_ticker, cik_payload = load_and_verify_cik_by_ticker(self.root, binding)
         return fundamentals, cik_by_ticker, cik_payload, binding
+
+    # ── WP9-only instant-level PIT boundary ───────────────────────────────
+    def _close_utc_for_snapshot(self, snapshot_date: str):
+        """Conservative UTC close instant for one WP9 forward snapshot.
+
+        This boundary is local to the WP9 forward input path. It does not alter
+        the certified shared panel/availability classes; the panel builder still
+        uses its own whole-day historical semantics below ``feature_asof``.
+        """
+        try:
+            return closing_utc_for_asof(snapshot_date)
+        except TemporalGateError as exc:
+            raise ForwardInputError(
+                "cannot derive conservative close for WP9 snapshot %s: %s"
+                % (snapshot_date, exc)
+            ) from exc
+
+    @staticmethod
+    def _admissible_prices_for_close(prices: pd.DataFrame, close_utc) -> pd.DataFrame:
+        """Return only price rows public at/before ``close_utc``."""
+        if prices is None or prices.empty or "trade_date" not in prices.columns:
+            return prices.copy() if prices is not None else pd.DataFrame()
+        available = prices["trade_date"].map(price_available_at)
+        mask = ~available.isna() & (available <= close_utc)
+        return prices.loc[mask].copy()
+
+    @staticmethod
+    def _admissible_fundamentals_for_close(
+        fundamentals: pd.DataFrame, close_utc
+    ) -> pd.DataFrame:
+        """Return only fundamental rows whose ``available_at`` now exists.
+
+        ``available_at`` is the certified SEC acceptance datetime, else
+        ``filing_date + 1 day``. Any missing/unparseable instant is unavailable
+        and excluded; no row is admitted after ``close_utc``.
+        """
+        if fundamentals is None or fundamentals.empty:
+            return fundamentals.copy() if fundamentals is not None else pd.DataFrame()
+        if "available_at" not in fundamentals.columns:
+            raise ForwardInputError(
+                "WP9 forward fundamentals are missing certified available_at column"
+            )
+        available = fundamentals["available_at"].map(to_utc_timestamp)
+        mask = ~available.isna() & (available <= close_utc)
+        return fundamentals.loc[mask].copy()
 
     def resolve_universe_at(self, snapshot_date: str, membership: pd.DataFrame) -> Dict[str, object]:
         """Resolve S&P 500 membership effective as-of ``snapshot_date`` only."""
@@ -261,11 +312,18 @@ class _ForwardInputBuilder:
             )
         return pd.DataFrame(rows, columns=["security_id", "ticker", "feature_asof", "price_date"])
 
-    def build_source_manifest(self, snapshot_date, layer_records, upstream: Dict[str, object]) -> Dict[str, object]:
+    def build_source_manifest(
+        self,
+        snapshot_date,
+        layer_records,
+        upstream: Dict[str, object],
+        snapshot_asof_utc_close: str | None = None,
+    ) -> Dict[str, object]:
         """Record source identity, versions, retrieval metadata, and row counts."""
         payload = {
             "schema_version": "wp9_source_manifest_v1",
             "snapshot_asof": snapshot_date,
+            "snapshot_asof_utc_close": snapshot_asof_utc_close,
             "allowed_sources": ["EODHD", "SEC_EDGAR", "WIKIPEDIA_SP500"],
             "sources": {
                 "eodhd_market": {
@@ -302,12 +360,16 @@ class _ForwardInputBuilder:
             feature_panel_builder = build_feature_panel
 
         layer_records = self.load_layer_records()
+        close_utc = self._close_utc_for_snapshot(snapshot_date)
         prices = self.load_prices(str(layer_records["silver_prices"]))
+        prices = self._admissible_prices_for_close(prices, close_utc)
         actions = self.load_actions(str(layer_records["silver_actions"]))
         membership = self.load_membership(str(layer_records["silver_membership"]))
         benchmark_prices = self.load_benchmark_prices()
+        benchmark_prices = self._admissible_prices_for_close(benchmark_prices, close_utc)
         benchmark_actions = self.load_benchmark_actions()
         fundamentals, cik_by_ticker, cik_payload, edgar_binding = self.load_fundamentals_and_cik()
+        fundamentals = self._admissible_fundamentals_for_close(fundamentals, close_utc)
 
         universe = self.resolve_universe_at(snapshot_date, membership)
         panel_rows = self.forward_panel_rows(
@@ -356,7 +418,10 @@ class _ForwardInputBuilder:
             "cik_mapping": cik_payload.get("mapping"),
         }
         manifest_payload = self.build_source_manifest(
-            snapshot_date, layer_records, upstream
+            snapshot_date,
+            layer_records,
+            upstream,
+            snapshot_asof_utc_close=close_utc.isoformat(),
         )
         manifest_payload.pop("source_manifest_hash", None)
         manifest_payload["feature_snapshot_hash"] = feature_snapshot_hash

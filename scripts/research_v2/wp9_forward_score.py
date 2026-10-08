@@ -55,7 +55,6 @@ from src.research.wp9.contract import (  # noqa: E402
     contract_freeze_timestamp,
     contract_path,
     load_wp9_contract,
-    monthly_cadence_is_valid,
 )
 from src.research.wp9.economics import persist_economic_shadow, select_top_quintile  # noqa: E402
 from src.research.wp9.forward_inputs import (  # noqa: E402
@@ -70,12 +69,20 @@ from src.research.wp9.storage import (  # noqa: E402
     Wp9StorageError,
     add_snapshot_to_run_registry,
     bindings_from_snapshot_id_inputs,
+    canonicalise_prediction_index,
     has_prediction_for_asof,
     initialise_run_registry,
     load_run_registry,
     snapshot_id_from_bindings,
     snapshot_payload,
     write_snapshot,
+)
+from src.research.wp9.temporal_gate import (  # noqa: E402
+    TemporalGateError,
+    bound_price_trade_dates,
+    closing_utc_for_asof,
+    current_utc,
+    last_eligible_score_date_for_month,
 )
 
 SCHEMA_VERSION = "wp9_forward_validation_predictions_v1"
@@ -203,17 +210,80 @@ def assert_asof_after_freeze(asof: str, contract: Wp9Contract, root: Path) -> No
         )
 
 
-def assert_monthly_cadence(asof: str) -> None:
-    if not monthly_cadence_is_valid(asof):
+def assert_monthly_cadence(asof: str, root: Path | None = None) -> str:
+    """Reject any official as-of that is not that month's last certified score date.
+
+    Official cadence is resolved from the bound silver price series only, never
+    a fuzzy holiday calendar and never a calendar month-end. A weekend/holiday
+    month-end that has no certified trading session is rejected.
+    """
+    root = Path(root or ROOT)
+    try:
+        trade_dates = bound_price_trade_dates(root)
+        eligible = last_eligible_score_date_for_month(asof, trade_dates)
+    except TemporalGateError as exc:
         raise Wp9ScoringError(
-            "%sasof_invalid_monthly_cadence:asof=%s" % (OFFICIAL_BLOCK_PREFIX, asof)
+            "%sasof_invalid_monthly_cadence:asof=%s reason=%s"
+            % (OFFICIAL_BLOCK_PREFIX, asof, exc)
+        ) from exc
+    if asof != eligible:
+        raise Wp9ScoringError(
+            "%sasof_not_last_eligible_score_date:asof=%s expected=%s"
+            % (OFFICIAL_BLOCK_PREFIX, asof, eligible)
         )
+    return eligible
 
 
 def assert_no_duplicate_snapshot(asof: str, root: Path) -> None:
     if has_prediction_for_asof(asof, root=root):
         raise Wp9ScoringError(
             "%sduplicate_snapshot_asof:asof=%s" % (OFFICIAL_BLOCK_PREFIX, asof)
+        )
+
+
+def _latest_official_month(root: Path) -> str | None:
+    """Latest official ``snapshot_asof`` month already present in the index."""
+    index = canonicalise_prediction_index(root)
+    asofs = [entry.get("snapshot_asof") for entry in index.get("entries", [])]
+    parsed = []
+    for value in asofs:
+        try:
+            parsed.append(pd.Timestamp(value).strftime("%Y-%m"))
+        except (TypeError, ValueError):
+            continue
+    return max(parsed) if parsed else None
+
+
+def assert_no_backfill(asof: str, root: Path) -> None:
+    """Reject an as-of month no newer than the latest existing official month."""
+    latest = _latest_official_month(root)
+    if latest is None:
+        return
+    asof_month = pd.Timestamp(asof).strftime("%Y-%m")
+    if asof_month <= latest:
+        raise Wp9ScoringError(
+            "%sasof_not_after_latest_official_snapshot_month:asof=%s latest=%s"
+            % (OFFICIAL_BLOCK_PREFIX, asof, latest)
+        )
+
+
+def assert_asof_not_in_future(
+    asof: str,
+    now_utc: pd.Timestamp | None = None,
+) -> None:
+    """Reject an as-of whose conservative UTC close instant has not elapsed."""
+    now_utc = now_utc or current_utc()
+    try:
+        close_utc = closing_utc_for_asof(asof)
+    except TemporalGateError as exc:
+        raise Wp9ScoringError(
+            "%sasof_in_future_unparseable:asof=%s reason=%s"
+            % (OFFICIAL_BLOCK_PREFIX, asof, exc)
+        ) from exc
+    if close_utc > now_utc:
+        raise Wp9ScoringError(
+            "%sasof_in_future_relative_to_eligibility_policy:asof=%s close_utc=%s now_utc=%s"
+            % (OFFICIAL_BLOCK_PREFIX, asof, close_utc.isoformat(), now_utc.isoformat())
         )
 
 
@@ -275,7 +345,9 @@ def preflight_official(
         ) from exc
     assert_contract_bytes_committed(contract, root)
     assert_asof_after_freeze(asof, contract, root)
-    assert_monthly_cadence(asof)
+    assert_monthly_cadence(asof, root)
+    assert_no_backfill(asof, root)
+    assert_asof_not_in_future(asof)
     assert_no_duplicate_snapshot(asof, root)
     code_commit = assert_clean_producing_worktree(root)
     # Artifact hashes are verified by load_champion, which refuses any byte drift.
@@ -378,7 +450,7 @@ def operational_health_record(
     payload: Mapping[str, Any],
     artifact_verification: Mapping[str, bool],
 ) -> Dict[str, Any]:
-    return compute_operational_health(
+    health = compute_operational_health(
         inputs.feature_frame,
         raw_scores=payload["raw_model_score"],
         calibrated_scores=payload["frozen_calibrated_score"],
@@ -390,6 +462,10 @@ def operational_health_record(
         feature_summary=inputs.feature_summary,
         artifact_verification=artifact_verification,
     )
+    # Diagnostic/provenance-only close instant; never a per-row snapshot column.
+    if getattr(inputs, "snapshot_asof_utc_close", None):
+        health["snapshot_asof_utc_close"] = inputs.snapshot_asof_utc_close
+    return health
 
 
 def persist_health(
