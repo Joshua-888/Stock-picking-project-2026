@@ -36,7 +36,20 @@ def _atomic_write_bytes(path, payload):
     try:
         with os.fdopen(handle_fd, "wb") as handle:
             handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(tmp_path, path)
+        try:
+            dir_fd = os.open(str(path.parent), os.O_RDONLY)
+        except OSError:
+            dir_fd = None
+        if dir_fd is not None:
+            try:
+                os.fsync(dir_fd)
+            except OSError:
+                pass
+            finally:
+                os.close(dir_fd)
     except BaseException:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)

@@ -18,6 +18,25 @@ class ImmutabilityError(RuntimeError):
     """Raised when a write would change an already persisted artefact."""
 
 
+def _fsync_directory(path: Path) -> None:
+    """Best-effort fsync of a directory so a rename is durable on POSIX.
+
+    Some platforms/filesystems do not allow opening a directory read-only;
+    failures here are intentionally ignored because the rename itself is the
+    atomicity guarantee and the file payload has already been fsynced.
+    """
+    try:
+        fd = os.open(str(path), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def write_json_atomic(path, obj):
     """Atomically write ``obj`` as canonical JSON to ``path`` (parents created)."""
     path = Path(path)
@@ -26,7 +45,10 @@ def write_json_atomic(path, obj):
     try:
         with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
             handle.write(canonical_json(obj) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(tmp_path, path)
+        _fsync_directory(path.parent)
     except BaseException:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
