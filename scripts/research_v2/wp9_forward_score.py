@@ -555,13 +555,15 @@ def execute(
         kind=OFFICIAL_KIND if official else DRY_RUN_KIND,
         root=root,
     )
-    registry = ensure_run_registry(contract, root)
-    add_snapshot_to_run_registry(
-        payload["snapshot_id"],
-        "official" if official else "dry_run",
-        root=root,
-        match_contract=contract.digest,
-    )
+    registry = None
+    if official:
+        registry = ensure_run_registry(contract, root)
+        add_snapshot_to_run_registry(
+            payload["snapshot_id"],
+            "official",
+            root=root,
+            match_contract=contract.digest,
+        )
     health_rel = persist_health(payload, health, official=official, root=root)
 
     economics_rel = None
@@ -585,7 +587,7 @@ def execute(
         "index_outcome": write_result.get("index_outcome") if isinstance(write_result, dict) else None,
         "code_commit": code_commit,
         "contract_digest": contract.digest,
-        "registry_schema": registry.get("schema_version"),
+        "registry_schema": registry.get("schema_version") if registry is not None else None,
     }
 
 

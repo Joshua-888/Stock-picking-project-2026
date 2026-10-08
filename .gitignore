@@ -60,3 +60,11 @@ artifacts/
 
 # V2 research data layers (generated, reproducible from source + manifests)
 data/research_v2/
+
+# WP9 non-evidentiary dry-run output (canonical registry/predictions/official
+# health/economics under provenance/wp9/ remain trackable)
+provenance/wp9/dry_runs/
+provenance/wp9/operational_health/dry_runs/
+
+# Agent Zero project tooling state
+.a0proj/

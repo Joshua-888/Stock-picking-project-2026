@@ -571,6 +571,125 @@ def test_dry_run_cannot_enter_official_registry(tmp_path):
     assert [entry["snapshot_id"] for entry in dry_index["entries"]] == [sid]
 
 
+def _forward_inputs(contract):
+    """Synthetic executable forward inputs matching the frozen feature set."""
+    bindings = _bindings(contract)
+    frame = _feature_frame(3)
+    return bindings, ForwardSnapshotInputs(
+        snapshot_asof=SNAPSHOT_ASOF,
+        universe={
+            "universe_count": 3,
+            "universe_hash": bindings["universe_hash"],
+        },
+        score_frame=frame,
+        feature_frame=frame,
+        feature_summary={"rows": 3},
+        source_manifest={
+            "source_manifest_hash": bindings["source_manifest_hash"],
+            "feature_snapshot_hash": bindings["feature_snapshot_hash"],
+        },
+    )
+
+
+def _execute_champion():
+    return _fake_champion(
+        _TransformOnlyPreprocessor(), _NoFitEstimator(), _PredictOnlyCalibrator()
+    )
+
+
+# ── 10b. Dry-run never mutates the canonical tracked run registry ───────────
+
+def test_dry_run_writes_only_under_ignored_dry_run_dirs(tmp_path, monkeypatch):
+    contract = _fake_contract()
+    root = tmp_path
+    monkeypatch.setattr(SCORER, "load_wp9_contract", lambda root=None: contract)
+    monkeypatch.setattr(SCORER, "load_champion", lambda root=None: _execute_champion())
+    monkeypatch.setattr(SCORER, "current_git_commit", lambda cwd=None: CODE_COMMIT)
+    _bindings, inputs = _forward_inputs(contract)
+
+    result = SCORER.execute(
+        mode=SCORER.DRY_RUN_MODE_TOKEN,
+        asof=SNAPSHOT_ASOF,
+        root=root,
+        inputs=inputs,
+    )
+
+    snapshot_rel = Path(result["snapshot_path"]).relative_to(root)
+    assert str(snapshot_rel).startswith("provenance/wp9/dry_runs/")
+    assert str(result["operational_health_path"]).startswith(
+        "provenance/wp9/operational_health/dry_runs/"
+    )
+    assert result["economics_shadow_path"] is None
+    assert result["registry_schema"] is None
+    assert not (root / "provenance" / "wp9" / "index.json").exists()
+    assert not (root / "provenance" / "wp9" / "predictions").exists()
+    assert not (root / "provenance" / "wp9" / "operational_health" / "official").exists()
+    assert not (root / "provenance" / "wp9" / "economics").exists()
+
+
+def test_dry_run_does_not_create_or_modify_canonical_run_registry(tmp_path, monkeypatch):
+    contract = _fake_contract()
+    root = tmp_path
+    storage_mod.initialise_run_registry(
+        contract_version=contract.version,
+        contract_digest=contract.digest,
+        champion_freeze=FROZEN_FREEZE_ID,
+        root=root,
+    )
+    registry_path = root / "provenance" / "wp9" / "index.json"
+    before_bytes = registry_path.read_bytes()
+    monkeypatch.setattr(SCORER, "load_wp9_contract", lambda root=None: contract)
+    monkeypatch.setattr(SCORER, "load_champion", lambda root=None: _execute_champion())
+    monkeypatch.setattr(SCORER, "current_git_commit", lambda cwd=None: CODE_COMMIT)
+    _bindings, inputs = _forward_inputs(contract)
+
+    SCORER.execute(
+        mode=SCORER.DRY_RUN_MODE_TOKEN,
+        asof=SNAPSHOT_ASOF,
+        root=root,
+        inputs=inputs,
+    )
+
+    assert registry_path.read_bytes() == before_bytes
+    registry = storage_mod.load_run_registry(root)
+    assert registry["dry_run_ids"] == []
+    assert registry["official_snapshot_ids"] == []
+
+
+def test_official_mode_registry_append_semantics_unchanged(tmp_path, monkeypatch):
+    contract = _fake_contract()
+    root = tmp_path
+    storage_mod.initialise_run_registry(
+        contract_version=contract.version,
+        contract_digest=contract.digest,
+        champion_freeze=FROZEN_FREEZE_ID,
+        root=root,
+    )
+    monkeypatch.setattr(
+        SCORER, "preflight_official", lambda asof, root: (contract, CODE_COMMIT)
+    )
+    monkeypatch.setattr(SCORER, "load_champion", lambda root=None: _execute_champion())
+    _bindings, inputs = _forward_inputs(contract)
+
+    result = SCORER.execute(
+        mode=SCORER.OFFICIAL_MODE_TOKEN,
+        asof=SNAPSHOT_ASOF,
+        root=root,
+        inputs=inputs,
+    )
+
+    registry = storage_mod.load_run_registry(root)
+    assert registry["official_snapshot_ids"] == [result["snapshot_id"]]
+    assert registry["dry_run_ids"] == []
+    assert result["registry_schema"] == storage_mod.RUN_INDEX_SCHEMA
+    pred_index = storage_mod.canonicalise_prediction_index(root)
+    assert [entry["snapshot_id"] for entry in pred_index["entries"]] == [
+        result["snapshot_id"]
+    ]
+    dry_index = storage_mod.canonicalise_dry_run_index(root)
+    assert dry_index["entries"] == []
+
+
 # ── 11-12. Scorer never loads/requests future outcomes ───────────────────────
 
 def test_official_scorer_works_without_target_columns(tmp_path):
