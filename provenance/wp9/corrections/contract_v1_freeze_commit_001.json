@@ -6,7 +6,7 @@
   "new_contract_digest": "b18baa261248245a39649bba77be981d0b025a5730adbce0863f81b89a788eeb",
   "new_freeze_commit": "c96559cf2eb7c65e2c15c4f8014a77faf2a8f4d3",
   "old_contract_commit": "c96559cf2eb7c65e2c15c4f8014a77faf2a8f4d3",
-  "new_contract_commit": "committed_as_of_empty",
+  "new_contract_commit": "2eddbb2a6819b133fc519d67cecec785e83c5c9f",
   "changed_fields": [
     "prospective.contract_freeze_commit"
   ],
