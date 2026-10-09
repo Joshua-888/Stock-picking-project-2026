@@ -544,6 +544,29 @@ def test_dirty_producing_path_detected():
     assert not SCORER._is_wp9_producing_path("docs/readme.md")
 
 
+def test_empty_git_status_stdout_is_success_not_failure(monkeypatch, tmp_path):
+    class _RunResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(SCORER.subprocess, "run", lambda *args, **kwargs: _RunResult())
+    assert SCORER._git(["status", "--porcelain", "--untracked-files=no"], tmp_path) == ""
+    assert SCORER._dirty_non_ignored_paths(tmp_path) == []
+    assert SCORER._git_required(["status", "--porcelain", "--untracked-files=no"], tmp_path) == ""
+
+
+def test_git_failure_still_raises_git_required_failed(monkeypatch, tmp_path):
+    class _RunResult:
+        returncode = 1
+        stdout = ""
+        stderr = "fatal: not a git repository"
+
+    monkeypatch.setattr(SCORER.subprocess, "run", lambda *args, **kwargs: _RunResult())
+    with pytest.raises(SCORER.Wp9ScoringError, match="git_required_failed"):
+        SCORER._git_required(["status", "--porcelain", "--untracked-files=no"], tmp_path)
+
+
 # ── F: atomicity and idempotency ────────────────────────────────────────────
 
 

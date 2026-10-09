@@ -126,8 +126,9 @@ def _git(args: Sequence[str], root: Path) -> str | None:
         return None
     if result.returncode != 0:
         return None
-    output = (result.stdout or "").strip()
-    return output or None
+    # A successful git command with empty stdout (e.g. a clean worktree status)
+    # is a valid result. Only failures/missing git/exceptions yield None.
+    return (result.stdout or "").strip()
 
 
 def _git_required(args: Sequence[str], root: Path) -> str:
