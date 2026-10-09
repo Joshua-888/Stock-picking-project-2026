@@ -898,6 +898,30 @@ def test_live_cadence_missing_live_records_fails_closed(tmp_path):
         SCORER.assert_monthly_cadence("2026-10-30", root, live=True)
 
 
+def test_live_cadence_rejects_incomplete_current_month_no_following_data(tmp_path):
+    # Live series has October rows but no November observation, so the month is
+    # not proven complete. The max observed date must not be admitted even when
+    # it exactly matches the requested as-of.
+    root = _write_certified_price_series(tmp_path, ["2026-09-25"])
+    _write_live_price_series(
+        root,
+        ["2026-10-01", "2026-10-08"],
+    )
+    with pytest.raises(SCORER.Wp9ScoringError, match="asof_invalid_monthly_cadence"):
+        SCORER.assert_monthly_cadence("2026-10-08", root, live=True)
+
+
+def test_cert_only_cadence_still_accepts_complete_cert_month(tmp_path):
+    # No live overlay requested, so the cert-only path remains byte-for-byte
+    # unchanged: it resolves by max certified trade date in the requested month.
+    root = _write_certified_price_series(
+        tmp_path,
+        ["2026-09-25", "2026-09-30", "2026-10-01"],
+    )
+    eligible = SCORER.assert_monthly_cadence("2026-09-30", root, live=False)
+    assert eligible == "2026-09-30"
+
+
 def test_out_of_order_official_asof_rejected(tmp_path):
     root = _write_certified_price_series(
         tmp_path,

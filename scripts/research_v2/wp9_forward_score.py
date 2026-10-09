@@ -82,6 +82,7 @@ from src.research.wp9.temporal_gate import (  # noqa: E402
     bound_price_trade_dates,
     closing_utc_for_asof,
     current_utc,
+    eligible_score_date_for_month,
     last_eligible_score_date_for_month,
     live_price_trade_dates,
 )
@@ -237,7 +238,16 @@ def assert_monthly_cadence(
             )
         else:
             trade_dates = bound_price_trade_dates(root)
-        eligible = last_eligible_score_date_for_month(asof, trade_dates)
+        if live:
+            # Official live mode must use the same fail-closed coverage rule as
+            # readiness: the month only resolves to an eligible date when
+            # following-month data proves it is complete. Do not admit an
+            # incomplete current month merely because it has an observed row.
+            eligible = eligible_score_date_for_month(
+                asof, trade_dates, require_coverage_complete=True
+            )
+        else:
+            eligible = last_eligible_score_date_for_month(asof, trade_dates)
     except TemporalGateError as exc:
         raise Wp9ScoringError(
             "%sasof_invalid_monthly_cadence:asof=%s reason=%s"
