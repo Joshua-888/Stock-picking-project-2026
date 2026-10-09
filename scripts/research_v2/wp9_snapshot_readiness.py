@@ -71,6 +71,10 @@ LIVE_PRICES = "wp9_live_prices"
 LIVE_ACTIONS = "wp9_live_actions"
 LIVE_MEMBERSHIP = "wp9_live_membership"
 LIVE_BENCHMARK_PRICES = "wp9_live_benchmark_prices"
+# Canonical source provenance written by the refresh builder for current-list
+# membership rows whose historical add date is unknown. The readiness check
+# uses the exact same value so the two paths cannot drift.
+LIVE_MEMBERSHIP_START_SOURCE = "current_sp500_list_retrieval_date"
 
 
 class ReadinessUsageError(RuntimeError):
@@ -304,14 +308,46 @@ def check_live_coverage(asof, root):
         return _result("live_coverage_through_asof", False, str(exc))
     latest_price = _latest_date(prices, "trade_date")
     latest_benchmark = _latest_date(benchmark, "trade_date")
-    ok = bool(latest_price and latest_benchmark and latest_price >= asof and latest_benchmark >= asof and len(membership) > 0)
+    membership_ok = True
+    membership_provenance_error = None
+    if membership is None or membership.empty:
+        membership_ok = False
+        membership_provenance_error = "membership_empty"
+    else:
+        if "membership_start" not in membership.columns:
+            membership_ok = False
+            membership_provenance_error = "membership_start_column_missing"
+        else:
+            starts = membership["membership_start"].astype(str)
+            if not (starts == str(asof)).all():
+                membership_ok = False
+                membership_provenance_error = "membership_start_not_equal_asof"
+            if membership_ok:
+                source_col = "membership_start_source"
+                if source_col not in membership.columns:
+                    membership_ok = False
+                    membership_provenance_error = "membership_start_source_missing"
+                else:
+                    sources = membership[source_col].astype(str)
+                    if not (sources == LIVE_MEMBERSHIP_START_SOURCE).all():
+                        membership_ok = False
+                        membership_provenance_error = "membership_start_source_invalid"
+    ok = bool(
+        latest_price
+        and latest_benchmark
+        and latest_price >= asof
+        and latest_benchmark >= asof
+        and membership_ok
+    )
     return _result(
         "live_coverage_through_asof",
         ok,
         {
             "latest_price": latest_price,
             "latest_benchmark": latest_benchmark,
-            "membership_rows": int(len(membership)),
+            "membership_rows": int(len(membership)) if membership is not None else 0,
+            "membership_start_source_required": LIVE_MEMBERSHIP_START_SOURCE,
+            "membership_provenance_error": membership_provenance_error,
             "required_min": asof,
         },
     )

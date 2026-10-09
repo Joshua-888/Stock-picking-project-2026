@@ -567,6 +567,84 @@ def test_git_failure_still_raises_git_required_failed(monkeypatch, tmp_path):
         SCORER._git_required(["status", "--porcelain", "--untracked-files=no"], tmp_path)
 
 
+def _ready_coverage_with_membership(monkeypatch, tmp_path, membership):
+    prices = pd.DataFrame({"trade_date": ["2026-10-08"]})
+    benchmark = pd.DataFrame({"trade_date": ["2026-10-08"]})
+
+    def live_table(root, name, records, key):
+        if key == "silver_prices":
+            return prices
+        if key == "silver_benchmark_prices":
+            return benchmark
+        if key == "silver_membership":
+            return membership
+        raise AssertionError("unexpected live table key %s" % key)
+
+    monkeypatch.setattr(
+        READINESS,
+        "_load_live_records",
+        lambda root: {
+            "silver_prices": "p",
+            "silver_benchmark_prices": "b",
+            "silver_membership": "m",
+        },
+    )
+    monkeypatch.setattr(READINESS, "_live_table", live_table)
+    return READINESS.check_live_coverage("2026-10-08", tmp_path)
+
+
+def test_readiness_accepts_live_membership_start_asof_with_source(monkeypatch, tmp_path):
+    membership = pd.DataFrame(
+        [
+            {
+                "security_id": "AAA",
+                "ticker": "AAA",
+                "membership_start": "2026-10-08",
+                "membership_end": None,
+                "start_known": False,
+                "membership_start_source": "current_sp500_list_retrieval_date",
+            }
+        ]
+    )
+    result = _ready_coverage_with_membership(monkeypatch, tmp_path, membership)
+    assert result["passed"] is True
+    assert result["detail"]["membership_provenance_error"] is None
+
+
+def test_readiness_rejects_live_membership_1900_sentinel(monkeypatch, tmp_path):
+    membership = pd.DataFrame(
+        [
+            {
+                "security_id": "AAA",
+                "ticker": "AAA",
+                "membership_start": "1900-01-01",
+                "membership_end": None,
+                "membership_start_source": "current_sp500_list_retrieval_date",
+            }
+        ]
+    )
+    result = _ready_coverage_with_membership(monkeypatch, tmp_path, membership)
+    assert result["passed"] is False
+    assert result["detail"]["membership_provenance_error"] == "membership_start_not_equal_asof"
+
+
+def test_readiness_rejects_live_membership_missing_source(monkeypatch, tmp_path):
+    membership = pd.DataFrame(
+        [
+            {
+                "security_id": "AAA",
+                "ticker": "AAA",
+                "membership_start": "2026-10-08",
+                "membership_end": None,
+                "start_known": False,
+            }
+        ]
+    )
+    result = _ready_coverage_with_membership(monkeypatch, tmp_path, membership)
+    assert result["passed"] is False
+    assert result["detail"]["membership_provenance_error"] == "membership_start_source_missing"
+
+
 # ── F: atomicity and idempotency ────────────────────────────────────────────
 
 
